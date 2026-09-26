@@ -2,6 +2,8 @@
 
 ## 0.1.1-rc.1, unpublished public release candidate
 
+- Separate acquisition I/O from TDF schema and calibration-cache ownership while preserving the public API and parsing behavior.
+
 - Prepare package discovery metadata, compiled API examples and a docs.rs-compatible documentation build.
 - Retain the Sage and tdfpy MIT notices alongside the existing MannLabs MIT and Apache-2.0 texts.
 - Document contribution, security reporting and a guarded public release process.

@@ -79,16 +79,21 @@ def main():
     connection = sqlite3.connect(root / "metadata.d/analysis.tdf")
     statements = [
         "ALTER TABLE FrameSource RENAME COLUMN NumScans TO numscans",
-        "ALTER TABLE FrameSource ADD COLUMN MzCalibration INTEGER DEFAULT 7",
+        "ALTER TABLE FrameSource ADD COLUMN MzCalibration INTEGER DEFAULT 1",
         "ALTER TABLE FrameSource ADD COLUMN T1 REAL DEFAULT 25.548975152547968",
         "CREATE TABLE MzCalibration(Id,ModelType,DigitizerTimebase,DigitizerDelay,T1,T2,dC1,dC2,C0,C1,C2,C3,C4)",
-        "INSERT INTO MzCalibration VALUES(7,1,0.2,25870,25.62513732863827,25.019305770074833,20,0,317.86417140238336,153159.143753129,0,0,0)",
+        "INSERT INTO MzCalibration VALUES(1,1,0.2,25870,25.62513732863827,25.019305770074833,20,0,317.86417140238336,153159.143753129,0,0,0)",
         "CREATE VIEW Oversized AS SELECT zeroblob(2048) AS Data",
         "CREATE VIEW Expensive AS WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<10000000) SELECT SUM(x) AS total FROM n",
         "CREATE VIEW ManyRows AS WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<100) SELECT x FROM n",
     ]
     for statement in statements:
         connection.execute(statement)
+    connection.commit()
+    connection.close()
+    shutil.copytree(root / "metadata.d", root / "duplicate-calibration.d")
+    connection = sqlite3.connect(root / "duplicate-calibration.d/analysis.tdf")
+    connection.execute("INSERT INTO MzCalibration SELECT * FROM MzCalibration")
     connection.commit()
     connection.close()
     (root / "checksum.zstd").write_bytes(zstandard(shuffled, checksum=True))

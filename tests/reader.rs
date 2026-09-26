@@ -203,3 +203,40 @@ fn concurrent_metadata_queries_keep_independent_budgets() {
         }
     });
 }
+
+#[test]
+fn calibration_tables_with_equal_ids_keep_independent_cached_models() {
+    let reader = TdfReader::open(fixture().parent().unwrap().join("metadata.d")).unwrap();
+    let reference: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/tims_calibration_sdk.json")).unwrap();
+    let scan = reference["cases"][0]["scans"][0].as_f64().unwrap();
+    let expected = reference["cases"][0]["one_over_k0"][0].as_f64().unwrap();
+    for frame in reader.frames() {
+        assert_eq!(frame.mobility_calibration_id, frame.mz_calibration_id);
+    }
+    for id in [42, 10, 42] {
+        let mz = reader.mz_model(id).unwrap().mz(100_000).unwrap();
+        let mobility = reader
+            .mobility_model(id)
+            .unwrap()
+            .one_over_k0(scan)
+            .unwrap();
+        assert!((mz - 317.80525993456973).abs() < 1e-9);
+        assert!((mobility - expected).abs() < 1e-12);
+    }
+}
+
+#[test]
+fn malformed_calibration_stays_lazy_and_never_leaves_a_partial_cache() {
+    let mut reader =
+        TdfReader::open(fixture().parent().unwrap().join("duplicate-calibration.d")).unwrap();
+    for _ in 0..3 {
+        assert_eq!(reader.read_frame(10).unwrap().tof_indices, [0, 5, 8]);
+        assert!(reader.mobility_model(10).is_ok());
+        let error = reader.mz_model(10).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "invalid TDF data: duplicate calibration identifier"
+        );
+    }
+}
