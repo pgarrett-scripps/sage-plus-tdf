@@ -1,4 +1,37 @@
 //! Read-only TDF frames and source metadata without spectrum synthesis.
+//!
+//! Frame identifiers, scan offsets, TOF indices and detector intensities are retained.
+//! Calibration is explicit and unsupported source models return an error.
+//!
+//! ```no_run
+//! use timsrust_reader::{Result, TdfReader};
+//!
+//! fn inspect(path: &str) -> Result<()> {
+//!     let mut reader = TdfReader::open(path)?;
+//!     let ids: Vec<_> = reader.frames().map(|frame| frame.id).collect();
+//!     for id in ids {
+//!         let frame = reader.read_frame(id)?;
+//!         for (scan, offsets) in frame.scan_offsets.windows(2).enumerate() {
+//!             let ions = offsets[0]..offsets[1];
+//!             println!("frame {id}, scan {scan}: {} ions", ions.len());
+//!         }
+//!     }
+//!     Ok(())
+//! }
+//! ```
+//!
+//! Mass and mobility models are loaded from the frame's recorded references.
+//! Missing calibration and unsupported equations are reported explicitly.
+//!
+//! ```no_run
+//! # use timsrust_reader::{Result, TdfReader};
+//! # fn calibrated(reader: &TdfReader, id: u64) -> Result<()> {
+//! let mz = reader.mz_model(id)?.mz(100_000)?;
+//! let mobility = reader.mobility_model(id)?.one_over_k0(100.0)?;
+//! println!("m/z {mz}, inverse reduced mobility {mobility}");
+//! # Ok(())
+//! # }
+//! ```
 #![forbid(unsafe_code)]
 mod compression;
 mod database;

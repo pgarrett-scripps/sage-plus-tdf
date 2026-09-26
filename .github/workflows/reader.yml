@@ -22,6 +22,25 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
       - run: cargo package --locked
+      - run: cargo test --locked --manifest-path target/package/timsrust-reader-0.1.0/Cargo.toml --target-dir target
       - run: cargo doc --locked --no-deps
         env:
+          RUSTDOCFLAGS: -D warnings
+
+  public-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CC: prohibited-native-c-compiler
+      CXX: prohibited-native-cxx-compiler
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 scripts/publication_preflight.py
+      - run: cargo doc --locked --all-features --no-deps --target x86_64-unknown-linux-gnu
+        env:
+          DOCS_RS: '1'
           RUSTDOCFLAGS: -D warnings
