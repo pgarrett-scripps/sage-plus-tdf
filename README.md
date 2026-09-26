@@ -22,6 +22,15 @@ This branch deliberately changes the API and package name. It is not a drop-in r
 
 Rust 1.97.1 is pinned for reproducible package and CI checks. Install from the private GitHub tag or revision using authenticated Git access. Public crates.io publishing is disabled in the manifest. Calibration tables are loaded once per reader when first requested. `FrameInfo` also exposes recorded polarity, accumulation time, temperature and calibration references when present.
 
+Authenticated Git users can pin the prepared candidate revision in `Cargo.toml`:
+
+```toml
+[dependencies]
+timsrust-reader = { git = "https://github.com/pgarrett-scripps/timsrust-reader", rev = "3ce6db2c37f5618fb2f8275aaac333c7f55d03df" }
+```
+
+A crates.io version dependency is not available until a separately authorized publication.
+
 ```rust,no_run
 use timsrust_reader::TdfReader;
 
