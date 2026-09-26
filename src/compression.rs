@@ -70,15 +70,26 @@ fn decode_v2(
     if expected > limits.max_decompressed_bytes {
         return Err(invalid("decompressed frame limit exceeded"));
     }
-    let decoder = ruzstd::decoding::StreamingDecoder::new_with_max_window_size(
+    let mut decoder = ruzstd::decoding::StreamingDecoder::new_with_max_window_size(
         data,
         limits.max_decompressed_bytes as u64,
     )
     .map_err(|e| invalid(format!("zstd: {e}")))?;
     let mut decoded = Vec::with_capacity(expected);
     decoder
+        .by_ref()
         .take(expected as u64 + 1)
         .read_to_end(&mut decoded)?;
+    if !decoder.decoder.is_finished() || !decoder.get_ref().is_empty() {
+        return Err(invalid(
+            "incomplete Zstandard frame or trailing compressed bytes",
+        ));
+    }
+    if let Some(expected_checksum) = decoder.decoder.get_checksum_from_data()
+        && decoder.decoder.get_calculated_checksum() != Some(expected_checksum)
+    {
+        return Err(invalid("Zstandard checksum mismatch"));
+    }
     decode_v2_bytes(&decoded, scans, peaks, frame)
 }
 
@@ -162,6 +173,11 @@ fn decode_v1(
     if data.len() < table_bytes {
         return Err(invalid("truncated scan offset table"));
     }
+    if word(data, 0)? as usize != table_bytes + 8
+        || word(data, scans * 4)? as usize != data.len() + 8
+    {
+        return Err(invalid("unreferenced bytes in LZF frame"));
+    }
     let per_scan_limit = peaks
         .checked_mul(8)
         .ok_or_else(|| invalid("scan limit overflow"))?
@@ -189,9 +205,8 @@ fn decode_v1(
                 return Err(invalid("partial LZF word"));
             }
             let mut tof = 0i64;
-            for bytes in bytes.chunks_exact(4) {
-                let value =
-                    i32::from_le_bytes(bytes.try_into().map_err(|_| invalid("partial word"))?);
+            for bytes in bytes.as_chunks::<4>().0 {
+                let value = i32::from_le_bytes(*bytes);
                 if value > 0 {
                     tof -= 1;
                     frame
@@ -253,5 +268,33 @@ mod tests {
     #[test]
     fn truncated_lzf_table_returns_error() {
         assert!(decode(1, 1, &[], 1, 1, Limits::default()).is_err());
+    }
+    #[test]
+    fn zstandard_checksum_trailing_bytes_and_truncations_are_rejected() {
+        let compressed = include_bytes!("../tests/fixtures/checksum.zstd");
+        let result = decode(2, 1, compressed, 3, 3, Limits::default()).unwrap();
+        assert_eq!(result.tof_indices, [0, 5, 8]);
+        let mut corrupt = compressed.to_vec();
+        *corrupt.last_mut().unwrap() ^= 1;
+        assert!(decode(2, 1, &corrupt, 3, 3, Limits::default()).is_err());
+        let mut trailing = compressed.to_vec();
+        trailing.push(0);
+        assert!(decode(2, 1, &trailing, 3, 3, Limits::default()).is_err());
+        for end in 0..compressed.len() {
+            assert!(decode(2, 1, &compressed[..end], 3, 3, Limits::default()).is_err());
+        }
+    }
+
+    #[test]
+    fn lzf_rejects_leading_gaps_and_trailing_bytes() {
+        let bytes = include_bytes!("../tests/fixtures/lzf.d/analysis.tdf_bin");
+        let compressed = &bytes[8..];
+        decode(1, 1, compressed, 2, 2, Limits::default()).unwrap();
+        let mut trailing = compressed.to_vec();
+        trailing.push(0);
+        assert!(decode(1, 1, &trailing, 2, 2, Limits::default()).is_err());
+        let mut gap = compressed.to_vec();
+        gap[0..4].copy_from_slice(&24u32.to_le_bytes());
+        assert!(decode(1, 1, &gap, 2, 2, Limits::default()).is_err());
     }
 }

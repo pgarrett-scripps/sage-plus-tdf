@@ -14,9 +14,11 @@ The library exposes original frame IDs, scan offsets, TOF indices, detector inte
 - Provides validated source ModelType 2 mobility conversion with boundary continuation matching Sage Plus's Bruker SDK reference.
 - Enforces configurable compressed size, decompressed size, scan and peak limits. Malformed offsets, count mismatches and integer overflows return errors.
 
-This branch deliberately changes the API and package name. It is not a drop-in replacement for the upstream `SpectrumReader`. TDF is supported. TSF, BAF, miniTDF and live acquisitions with active SQLite journals are rejected. Raw TOF coordinates are preserved, and an m/z calibration API is not yet provided. Consumers can inspect the original calibration tables.
+This branch deliberately changes the API and package name. It is not a drop-in replacement for the upstream `SpectrumReader`. TDF is supported. TSF, BAF, miniTDF and live acquisitions with active SQLite journals are rejected. Raw TOF coordinates are preserved. `TdfReader::mz_model` supports source ModelType 1 with per-frame T1 temperature and zero dC2, C2, C3 and C4. Other models return `Unsupported`, without fitting or substituting approximate masses.
 
 ## Use
+
+Rust 1.97.1 is pinned for reproducible package and CI checks. Install from the private GitHub tag or revision using authenticated Git access. Public crates.io publishing is disabled in the manifest. Calibration tables are loaded once per reader when first requested. `FrameInfo` also exposes recorded polarity, accumulation time, temperature and calibration references when present.
 
 ```rust
 use timsrust_reader::TdfReader;
@@ -39,11 +41,11 @@ cargo test --locked
 cargo run --locked --example inspect -- /path/to/acquisition.d
 ```
 
-`Limits::default()` allows 256 MiB compressed data, 512 MiB decompressed data, 32 million peaks and 100,000 scans per frame. `TdfReader::with_limits` accepts alternative ceilings. Metadata tables are currently materialized in memory and do not have a row-count ceiling.
+`Limits::default()` allows 256 MiB compressed data, 512 MiB decompressed data, 32 million peaks and 100,000 scans per frame. `TdfReader::with_limits` accepts alternative ceilings. `Limits::metadata` controls metadata materialization and execution. Defaults allow 2 million rows, 256 columns, 16 MiB per source value and approximately 512 MiB of materialized values per query. Queries stop after approximately 100 million VM operations or 30 seconds. These bound this library's output and VM execution, not every internal allocation made by the prerelease database engine. Schema preparation and a single SQLite value may allocate before output checks. Use process isolation when parsing hostile databases.
 
 ## Evidence and adoption
 
-See [the code review](REVIEW.md) and [machine-readable qualification](qualification.json). Both DDA and DIA raw-frame digests match upstream TimsRust exactly on the local fixtures. The tests include independently generated SQLite and Zstandard fixtures, LZF decoding, metadata views, malformed frames and mobility reference values.
+See [the code review](REVIEW.md) and [machine-readable qualification](qualification.json). Both DDA and DIA raw-frame digests match upstream TimsRust exactly on four local fixtures, including a 710-frame acquisition with 26,086,520 ions and an SCP DIA acquisition with 131 frames and 4,470,167 ions. The tests include independently generated SQLite and Zstandard fixtures, LZF decoding, metadata views, malformed frames and mobility reference values.
 
 Sage Plus and MSConvert RS have not been switched to this branch. Adoption requires replacing their upstream spectrum synthesis calls with explicit application-level processing over these raw frames. Read-only SQLite and view support are part of this library, so there is no `filemanager` patch to carry. Keep application-level scientific validation during the migration.
 

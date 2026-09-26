@@ -9,3 +9,5 @@ Mobility equations and the reference fixture come from the local Sage Plus `crat
 Synthetic SQLite and compressed frame fixtures were generated locally for these regression tests. No private acquisition is included.
 
 The original repository license notice and upstream package license declaration are both retained. Dependencies keep their own licenses.
+
+The restricted ModelType 1 mass equations are adapted from MSConvert RS source calibration, which documents the timsrust-calibration 0.1.1 equations. Per-frame temperatures and unsupported higher-order terms are handled explicitly.

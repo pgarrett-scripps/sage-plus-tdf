@@ -27,6 +27,31 @@
         "analysis.tdf": "e8628dd512350c9f760a38bf31be5aaf502d9e293a0246e9c5b457a42df169df",
         "analysis.tdf_bin": "663fc5e676ff98769670a56389108bd9fc1d2ebb06d98a3b09539713d984d8ad"
       }
+    },
+    {
+      "frames": 710,
+      "peaks": 26086520,
+      "raw_digest": "ac8b2b59d806473032c2793b0e179fe60f2a471611329804c9e560a00094bde6",
+      "fixture": "example-dda.d",
+      "upstream_raw_digest": "ac8b2b59d806473032c2793b0e179fe60f2a471611329804c9e560a00094bde6",
+      "matches_upstream": true,
+      "files": {
+        "analysis.tdf_bin": "12ef8459c7bd3ce3bab02928b061ce878213c0b7ff23691739168b536cabb439",
+        "analysis.tdf": "417878100007967f1eb15e82f2a272f66734dc4308253aa8de87f0d1963480b1"
+      }
+    },
+    {
+      "frames": 131,
+      "peaks": 4470167,
+      "raw_digest": "981a617aee90efe9a4540519626f0ef71093e8b75cc3d559d5abcd500c7e8668",
+      "fixture": "timstof-scp-idleflow-dia.d",
+      "upstream_raw_digest": "981a617aee90efe9a4540519626f0ef71093e8b75cc3d559d5abcd500c7e8668",
+      "matches_upstream": true,
+      "files": {
+        "analysis.tdf_bin": "67a9879611df012995e56f15e8c77cf07708a239888bcd19ef5a7ec0fc29d53c",
+        "analysis.tdf": "43bc9302a7c0723f06192cb0e580f5504319124632b34ee49bd424b8d478e90f"
+      }
     }
-  ]
+  ],
+  "rust_toolchain": "1.97.1"
 }

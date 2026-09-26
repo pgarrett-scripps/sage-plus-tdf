@@ -2,6 +2,10 @@
 name = "timsrust-reader"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.97"
+publish = false
+readme = "README.md"
+include = ["src/**", "examples/**", "tests/**", "Cargo.toml", "Cargo.lock", "README.md", "REVIEW.md", "qualification.json", "LICENSE*", "NOTICE.md", "rust-toolchain.toml"]
 license = "Apache-2.0 AND MIT"
 description = "Read-only native Rust parser for Bruker TDF acquisition directories"
 repository = "https://github.com/pgarrett-scripps/timsrust-reader"

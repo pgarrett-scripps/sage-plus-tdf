@@ -16,13 +16,13 @@ Reviewed TimsRust 0.6.6 at `80e235a`, the Sage Plus vendored filemanager and mob
 
 ## Database and dependency decisions
 
-Turso is an exact pinned prerelease. `fs`, `uuid`, `json` and `pure-rust-crypto` features are enabled with defaults disabled. The prerelease fails compilation when UUID or JSON is disabled. SIMD, native allocator and C crypto features are excluded. A dependency-tree check found no `rusqlite`, `libsqlite3-sys`, `zstd-sys`, vendor SDK, Python or cloud dependency in the reader.
+Turso is an exact pinned prerelease. `fs`, `uuid`, `json` and `pure-rust-crypto` features are enabled with defaults disabled. The prerelease fails compilation when UUID or JSON is disabled. SIMD, native allocator and C crypto features are excluded. The transitive AEGIS build script returns before compiling C because pure-rust-crypto is enabled. CI sets CC and CXX to nonexistent compiler names to catch accidental native C compilation. A dependency-tree check found no `rusqlite`, `libsqlite3-sys`, `zstd-sys`, vendor SDK, Python or cloud dependency in the reader.
 
 The database is opened using `OpenFlags::ReadOnly`. Missing paths are rejected before opening. Nonempty SQLite WAL and journal sidecars are rejected because this reader targets completed acquisitions. This is not a filesystem snapshot or a guarantee against a concurrent acquisition process.
 
 ## Validation
 
-Formatting, Clippy with warnings denied, 3 decoder unit tests and 5 integration tests pass on Linux. Tests cover read-only behavior without sidecars, source hashes, SQLite views, casing, quoted identifiers, blob values, sparse IDs, empty tables, active journals, limits, malformed LZF offsets and source mobility reference values.
+Formatting, Clippy with warnings denied, 5 decoder unit tests and 7 integration tests pass on Linux. Tests cover read-only behavior without sidecars, source hashes, SQLite views, casing, quoted identifiers, blob values, sparse IDs, empty tables, active journals, limits, malformed LZF offsets and source mobility reference values.
 
 Independent fixture generation uses SQLite from Python's standard library and libzstd to create static test assets. Neither is a runtime dependency of this reader. Both compression modes have synthetic regression coverage. The local DDA and DIA acquisitions exercise Zstandard decoding.
 
@@ -31,9 +31,13 @@ The complete raw frame digests, including source frame ID, scan offsets, TOF ind
 ## Remaining work
 
 - Turso is a prerelease. Broader real TDF schema and SQLite feature coverage is required before production adoption.
-- Metadata tables are read into memory. Metadata row and query-time limits remain to be implemented.
+- Metadata output now has row, column, value and materialized-size bounds, plus a VM operation ceiling and deadline. Turso schema preparation and individual SQLite values can allocate before these output checks. This is not a hard process memory limit.
 - More real acquisitions are needed for LZF, calibration variants, damaged databases and different instrument generations.
-- No m/z calibration API is exposed yet. Raw coordinates and source calibration tables are retained without approximating masses.
+- Source m/z ModelType 1 with zero dC2, C2, C3 and C4 is supported with per-frame T1 temperature. Unsupported terms fail explicitly. Broader mass models need independent scientific validation.
 - TSF and BAF are outside this TDF-only branch. No pseudo-DDA spectrum compatibility layer is provided.
 - Windows and macOS are included in CI configuration but were not executed locally.
 - Integrating Sage Plus and MSConvert RS requires an explicit consumer migration with scientific regression tests. This change does not modify either consumer.
+
+## Release hardening
+
+The second review fixed unchecked Zstandard checksums and trailing compressed bytes, rejected unreferenced LZF bytes, bounded metadata queries, preserved case-insensitive typed column lookup and cached source calibration tables. Checksum corruption, every truncation of a checked Zstandard fixture, LZF gaps, recursive views, oversized metadata, temperature dependence and unsupported mass terms have regression coverage. Rust 1.97.1 is pinned, the new Clippy lint is resolved, and CI verifies the distributable package and documentation on each platform. Public registry publication is disabled.

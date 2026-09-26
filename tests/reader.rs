@@ -119,3 +119,67 @@ fn mobility_matches_sage_plus_sdk_reference_including_boundaries() {
         }
     }
 }
+
+#[test]
+fn metadata_limits_stop_large_values_rows_and_recursive_queries() {
+    use timsrust_reader::MetadataLimits;
+    let path = fixture().parent().unwrap().join("metadata.d/analysis.tdf");
+    let db = MetadataDatabase::with_limits(
+        &path,
+        MetadataLimits {
+            max_value_bytes: 1024,
+            max_vm_operations: 10_000,
+            ..MetadataLimits::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        db.table("Oversized")
+            .unwrap_err()
+            .to_string()
+            .contains("limit")
+    );
+    assert!(db.table("Expensive").is_err());
+    // An interrupted statement must not poison later metadata queries.
+    assert_eq!(db.table("Frames").unwrap().len(), 2);
+    let db = MetadataDatabase::with_limits(
+        &path,
+        MetadataLimits {
+            max_rows: 20,
+            ..MetadataLimits::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(db.table("Frames").unwrap().len(), 2);
+    assert!(db.table("ManyRows").is_err());
+    let db = MetadataDatabase::with_limits(
+        &path,
+        MetadataLimits {
+            max_materialized_bytes: 1024,
+            ..MetadataLimits::default()
+        },
+    )
+    .unwrap();
+    assert!(db.table("Oversized").is_err());
+}
+
+#[test]
+fn source_mass_model_uses_temperature_and_canonical_column_names() {
+    let reader = TdfReader::open(fixture().parent().unwrap().join("metadata.d")).unwrap();
+    assert_eq!(reader.frames().next().unwrap().scan_count, 3);
+    assert!(reader.metadata().table("Frames").unwrap()[0].contains_key("numscans"));
+    let model = reader.mz_model(10).unwrap();
+    assert!((model.mz(100_000).unwrap() - 317.80525993456973).abs() < 1e-9);
+    assert!(reader.mz_model(999).is_err());
+    let mut row = reader.metadata().table("MzCalibration").unwrap().remove(0);
+    let warmer = timsrust_reader::MzModel::from_metadata(&row, 26.0).unwrap();
+    assert!(warmer.mz(100_000).unwrap() < model.mz(100_000).unwrap());
+    row.insert("dC2".into(), 1.into());
+    assert!(matches!(
+        timsrust_reader::MzModel::from_metadata(&row, 26.0),
+        Err(timsrust_reader::Error::Unsupported(_))
+    ));
+    row.insert("dC2".into(), 0.into());
+    row.insert("C1".into(), (-1).into());
+    assert!(timsrust_reader::MzModel::from_metadata(&row, 26.0).is_err());
+}

@@ -2,12 +2,15 @@
 #![forbid(unsafe_code)]
 mod compression;
 mod database;
+mod mass;
 mod mobility;
 
-pub use database::{MetadataDatabase, MetadataRow};
+pub use database::{MetadataDatabase, MetadataLimits, MetadataRow};
+pub use mass::MzModel;
 pub use mobility::MobilityModel;
 use serde::Deserialize;
 use std::{
+    cell::OnceCell,
     collections::BTreeMap,
     fs::File,
     io::{Read, Seek, SeekFrom},
@@ -39,6 +42,7 @@ pub struct Limits {
     pub max_decompressed_bytes: usize,
     pub max_peaks: usize,
     pub max_scans: usize,
+    pub metadata: MetadataLimits,
 }
 impl Default for Limits {
     fn default() -> Self {
@@ -47,6 +51,7 @@ impl Default for Limits {
             max_decompressed_bytes: 512 * 1024 * 1024,
             max_peaks: 32_000_000,
             max_scans: 100_000,
+            metadata: MetadataLimits::default(),
         }
     }
 }
@@ -68,6 +73,14 @@ pub struct FrameInfo {
     pub binary_offset: u64,
     #[serde(rename = "TimsCalibration", default)]
     pub mobility_calibration_id: Option<u64>,
+    #[serde(rename = "MzCalibration", default)]
+    pub mz_calibration_id: Option<u64>,
+    #[serde(rename = "T1", default)]
+    pub temperature: Option<f64>,
+    #[serde(rename = "Polarity", default)]
+    pub polarity: Option<String>,
+    #[serde(rename = "AccumulationTime", default)]
+    pub accumulation_time_ms: Option<f64>,
 }
 
 /// Original raw coordinates and counts. Intensities are not rescaled.
@@ -86,6 +99,8 @@ pub struct TdfReader {
     frames: BTreeMap<u64, FrameInfo>,
     compression: u32,
     limits: Limits,
+    mobility_rows: OnceCell<BTreeMap<u64, MetadataRow>>,
+    mz_rows: OnceCell<BTreeMap<u64, MetadataRow>>,
 }
 impl TdfReader {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
@@ -103,8 +118,13 @@ impl TdfReader {
                 )
             })?
             .to_path_buf();
-        let metadata = MetadataDatabase::open(directory.join("analysis.tdf"))?;
-        let global = metadata.table("GlobalMetadata")?;
+        let metadata =
+            MetadataDatabase::with_limits(directory.join("analysis.tdf"), limits.metadata)?;
+        let global = metadata
+            .table("GlobalMetadata")?
+            .into_iter()
+            .map(canonical_columns)
+            .collect::<Result<Vec<_>>>()?;
         let compression = global
             .iter()
             .find(|r| r.get("Key").and_then(|v| v.as_str()) == Some("TimsCompressionType"))
@@ -120,7 +140,8 @@ impl TdfReader {
         let binary_length = binary.metadata()?.len();
         let mut frames = BTreeMap::new();
         for row in metadata.table("Frames")? {
-            let frame: FrameInfo = serde_json::from_value(serde_json::Value::Object(row))?;
+            let frame: FrameInfo =
+                serde_json::from_value(serde_json::Value::Object(canonical_columns(row)?))?;
             if frame.id == 0
                 || !frame.retention_time_seconds.is_finite()
                 || frame.retention_time_seconds < 0.0
@@ -144,6 +165,8 @@ impl TdfReader {
             frames,
             compression,
             limits,
+            mobility_rows: OnceCell::new(),
+            mz_rows: OnceCell::new(),
         })
     }
 
@@ -200,15 +223,10 @@ impl TdfReader {
             .ok_or_else(|| invalid("unknown frame"))?
             .mobility_calibration_id
             .ok_or_else(|| invalid("frame has no TimsCalibration reference"))?;
-        let rows = self.metadata.table("TimsCalibration")?;
-        let matches: Vec<_> = rows
-            .iter()
-            .filter(|row| row.get("Id").and_then(|v| v.as_u64()) == Some(id))
-            .collect();
-        if matches.len() != 1 {
-            return Err(invalid("missing or duplicate calibration identifier"));
-        }
-        let row = matches[0];
+        let row = self
+            .calibration_rows("TimsCalibration", &self.mobility_rows)?
+            .get(&id)
+            .ok_or_else(|| invalid("missing referenced mobility calibration"))?;
         if row.get("ModelType").and_then(|v| v.as_u64()) != Some(2) {
             return Err(Error::Unsupported("mobility ModelType must be 2".into()));
         }
@@ -221,4 +239,92 @@ impl TdfReader {
         }
         MobilityModel::new(coefficients)
     }
+}
+
+impl TdfReader {
+    fn calibration_rows<'a>(
+        &self,
+        table: &str,
+        cache: &'a OnceCell<BTreeMap<u64, MetadataRow>>,
+    ) -> Result<&'a BTreeMap<u64, MetadataRow>> {
+        if let Some(rows) = cache.get() {
+            return Ok(rows);
+        }
+        let mut rows = BTreeMap::new();
+        for row in self.metadata.table(table)? {
+            let row = canonical_columns(row)?;
+            let id = row
+                .get("Id")
+                .and_then(|v| v.as_u64())
+                .ok_or_else(|| invalid("invalid calibration identifier"))?;
+            if rows.insert(id, row).is_some() {
+                return Err(invalid("duplicate calibration identifier"));
+            }
+        }
+        Ok(cache.get_or_init(|| rows))
+    }
+
+    /// Exact supported source model for this frame, including its recorded temperature.
+    /// Unknown models and higher-order terms return Unsupported instead of approximate masses.
+    pub fn mz_model(&self, frame: u64) -> Result<MzModel> {
+        let frame = self
+            .frames
+            .get(&frame)
+            .ok_or_else(|| invalid("unknown frame"))?;
+        let id = frame
+            .mz_calibration_id
+            .ok_or_else(|| invalid("frame has no MzCalibration reference"))?;
+        let temperature = frame
+            .temperature
+            .ok_or_else(|| invalid("frame has no T1 temperature"))?;
+        let row = self
+            .calibration_rows("MzCalibration", &self.mz_rows)?
+            .get(&id)
+            .ok_or_else(|| invalid("missing referenced m/z calibration"))?;
+        MzModel::from_metadata(row, temperature)
+    }
+}
+
+// SQLite identifiers are ASCII case insensitive. Public metadata retains source spelling.
+fn canonical_columns(row: MetadataRow) -> Result<MetadataRow> {
+    const NAMES: &[&str] = &[
+        "Id",
+        "Time",
+        "MsMsType",
+        "NumScans",
+        "NumPeaks",
+        "TimsId",
+        "TimsCalibration",
+        "MzCalibration",
+        "T1",
+        "T2",
+        "Polarity",
+        "AccumulationTime",
+        "Key",
+        "Value",
+        "ModelType",
+        "DigitizerTimebase",
+        "DigitizerDelay",
+        "dC1",
+        "dC2",
+        "C0",
+        "C1",
+        "C2",
+        "C3",
+        "C4",
+        "C5",
+        "C6",
+        "C7",
+        "C8",
+        "C9",
+    ];
+    let mut result = MetadataRow::new();
+    for (name, value) in row {
+        let canonical = NAMES.iter().find(|key| key.eq_ignore_ascii_case(&name));
+        let name = canonical.map(|s| (*s).to_owned()).unwrap_or(name);
+        if result.insert(name, value).is_some() {
+            return Err(invalid("ambiguous metadata column spelling"));
+        }
+    }
+    Ok(result)
 }
