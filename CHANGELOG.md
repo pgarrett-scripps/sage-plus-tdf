@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1-rc.2, unpublished public release candidate
+
+- Add structured failure categories, actionable acquisition/frame/table/field locations and retained source errors.
+- Distinguish configured resource ceilings from corrupt data and unsupported source models.
+- Add bounded decoder, schema and calibration fuzzing and a dependency-light JSON benchmark.
+
 ## 0.1.1-rc.1, unpublished public release candidate
 
 - Separate acquisition I/O from TDF schema and calibration-cache ownership while preserving the public API and parsing behavior.

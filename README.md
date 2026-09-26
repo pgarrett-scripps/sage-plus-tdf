@@ -2,7 +2,7 @@
 
 A read-only Rust reader for completed Bruker TDF `.d` directories. Derived from MannLabs TimsRust 0.6.6 at `80e235a`, with upstream history retained.
 
-The `0.1.1-rc.1` public release candidate is prepared in a private repository. The crate has not been published to crates.io, and no hosted API documentation is available yet. This project is an independent derivative, not an upstream MannLabs release or an official Bruker product.
+The `0.1.1-rc.2` public release candidate is prepared in a private repository. The crate has not been published to crates.io, and no hosted API documentation is available yet. This project is an independent derivative, not an upstream MannLabs release or an official Bruker product.
 
 The library exposes original frame IDs, scan offsets, TOF indices, detector intensities and source SQLite metadata. It does not generate pseudo-DDA spectra, merge DIA windows, centroid peaks or write acquisition files.
 
@@ -56,7 +56,7 @@ cargo run --locked --example inspect -- /path/to/acquisition.d
 
 ## Evidence and adoption
 
-See [the code review](REVIEW.md) and [machine-readable qualification](qualification.json). Both DDA and DIA raw-frame digests match upstream TimsRust exactly on four local fixtures, including a 710-frame acquisition with 26,086,520 ions and an SCP DIA acquisition with 131 frames and 4,470,167 ions. The tests include independently generated SQLite and Zstandard fixtures, LZF decoding, metadata views, malformed frames and mobility reference values.
+See [the code review](REVIEW.md) and [machine-readable qualification](qualification.json). DDA, DIA and PRM raw-frame digests match upstream TimsRust exactly on six acquisitions, including a 710-frame acquisition with 26,086,520 ions and an SCP DIA acquisition with 131 frames and 4,470,167 ions. The tests include independently generated SQLite and Zstandard fixtures, LZF decoding, metadata views, malformed frames and mobility reference values.
 
 Sage Plus and MSConvert RS have not been switched to this branch. Adoption requires replacing their upstream spectrum synthesis calls with explicit application-level processing over these raw frames. Read-only SQLite and view support are part of this library, so there is no `filemanager` patch to carry. Keep application-level scientific validation during the migration.
 
@@ -67,3 +67,13 @@ Upstream is [MannLabs TimsRust](https://github.com/MannLabs/timsrust). The origi
 ## Development and release preparation
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development checks, [SECURITY.md](SECURITY.md) for the input trust boundary and vulnerability reporting, and [RELEASING.md](RELEASING.md) for the guarded publication dry run.
+
+## Actionable errors
+
+`Error::kind()` distinguishes unsupported features, corrupt input, resource ceilings, I/O failures and database failures. `Error::contexts()` identifies the acquisition path, frame ID, table, field and binary frame-header byte offset when available. `Error::root_error()` retains the original typed cause, including SQLite, JSON, I/O and decoder failures. Error enums are nonexhaustive. Match the failure category instead of parsing display strings or assuming the outer variant is the original cause.
+
+Resource errors report the configured maximum and observed value. Metadata limits report the table or field being materialized. VM budgets and deadlines remain independent for concurrent callers. Increasing a limit is a caller decision, and the reader never retries with a larger limit automatically.
+
+See `fuzz/README.md` in the source repository for bounded parser checks and [performance measurement instructions](benchmarks/README.md) for deterministic sequential and random-access workloads.
+
+Expanded acquisition evidence and reproducible public corpus downloads are documented in [QUALIFICATION.md](QUALIFICATION.md). Real LZF payload qualification uses explicitly derived copies because the source test databases have inconsistent scan counts. Original inconsistent files remain rejected.

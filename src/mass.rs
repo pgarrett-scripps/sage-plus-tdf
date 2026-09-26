@@ -1,4 +1,4 @@
-use crate::{Error, MetadataRow, Result, invalid};
+use crate::{Error, MetadataRow, Result, field, invalid};
 
 /// Restricted source ModelType 1 mass calibration with per-frame temperature.
 /// Only zero dC2, C2, C3 and C4 are supported. No boundary fitting is performed.
@@ -16,14 +16,28 @@ impl MzModel {
                 .map(|(_, value)| value)
                 .and_then(|v| v.as_f64())
                 .filter(|v| v.is_finite())
-                .ok_or_else(|| invalid(format!("missing or nonfinite m/z coefficient {key}")))
+                .ok_or_else(|| {
+                    field(
+                        invalid("missing or nonfinite m/z coefficient"),
+                        "MzCalibration",
+                        key,
+                    )
+                })
         };
         if number("ModelType")? != 1.0 {
-            return Err(Error::Unsupported("m/z ModelType must be 1".into()));
+            return Err(field(
+                Error::Unsupported("m/z ModelType must be 1".into()),
+                "MzCalibration",
+                "ModelType",
+            ));
         }
         for key in ["dC2", "C2", "C3", "C4"] {
             if number(key)? != 0.0 {
-                return Err(Error::Unsupported(format!("nonzero m/z {key}")));
+                return Err(field(
+                    Error::Unsupported(format!("nonzero m/z {key}")),
+                    "MzCalibration",
+                    key,
+                ));
             }
         }
         let timebase = number("DigitizerTimebase")?;

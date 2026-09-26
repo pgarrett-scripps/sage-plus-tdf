@@ -175,10 +175,12 @@ fn source_mass_model_uses_temperature_and_canonical_column_names() {
     let warmer = timsrust_reader::MzModel::from_metadata(&row, 26.0).unwrap();
     assert!(warmer.mz(100_000).unwrap() < model.mz(100_000).unwrap());
     row.insert("dC2".into(), 1.into());
-    assert!(matches!(
-        timsrust_reader::MzModel::from_metadata(&row, 26.0),
-        Err(timsrust_reader::Error::Unsupported(_))
-    ));
+    assert_eq!(
+        timsrust_reader::MzModel::from_metadata(&row, 26.0)
+            .unwrap_err()
+            .kind(),
+        timsrust_reader::ErrorKind::Unsupported
+    );
     row.insert("dC2".into(), 0.into());
     row.insert("C1".into(), (-1).into());
     assert!(timsrust_reader::MzModel::from_metadata(&row, 26.0).is_err());
@@ -235,8 +237,119 @@ fn malformed_calibration_stays_lazy_and_never_leaves_a_partial_cache() {
         assert!(reader.mobility_model(10).is_ok());
         let error = reader.mz_model(10).unwrap_err();
         assert_eq!(
-            error.to_string(),
+            error.root_error().to_string(),
             "invalid TDF data: duplicate calibration identifier"
         );
     }
+}
+
+#[test]
+fn contextual_errors_distinguish_limits_from_corruption_and_keep_sources() {
+    use timsrust_reader::{Error, ErrorKind};
+    let error = match TdfReader::with_limits(
+        fixture(),
+        Limits {
+            max_peaks: 2,
+            ..Default::default()
+        },
+    ) {
+        Ok(_) => panic!("peak ceiling was ignored"),
+        Err(error) => error,
+    };
+    assert_eq!(error.kind(), ErrorKind::ResourceLimit);
+    assert!(error.contexts().any(|context| context.frame_id == Some(10)));
+    assert!(
+        error
+            .contexts()
+            .any(|context| context.field.as_deref() == Some("NumPeaks"))
+    );
+    assert!(matches!(
+        error.root_error(),
+        Error::ResourceLimit {
+            resource: "peaks",
+            maximum: 2,
+            observed: 3,
+            ..
+        }
+    ));
+
+    let dir = tempfile::tempdir().unwrap();
+    for name in ["analysis.tdf", "analysis.tdf_bin"] {
+        std::fs::copy(fixture().join(name), dir.path().join(name)).unwrap();
+    }
+    let mut reader = TdfReader::open(dir.path()).unwrap();
+    std::fs::write(dir.path().join("analysis.tdf_bin"), []).unwrap();
+    let error = reader.read_frame(10).unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::CorruptData);
+    assert!(
+        error
+            .contexts()
+            .any(|context| context.frame_id == Some(10) && context.byte_offset == Some(0))
+    );
+    assert!(
+        matches!(error.root_error(), Error::Io(source) if source.kind() == std::io::ErrorKind::UnexpectedEof)
+    );
+    assert!(std::error::Error::source(&error).is_some());
+    let unknown = reader.read_frame(999).unwrap_err();
+    assert!(
+        unknown
+            .contexts()
+            .any(|context| context.frame_id == Some(999))
+    );
+}
+
+#[test]
+fn metadata_limits_and_invalid_database_have_actionable_locations() {
+    use timsrust_reader::{Error, ErrorKind, MetadataLimits};
+    let path = fixture().parent().unwrap().join("metadata.d/analysis.tdf");
+    let db = MetadataDatabase::with_limits(
+        &path,
+        MetadataLimits {
+            max_value_bytes: 1024,
+            max_vm_operations: 10_000,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let value_error = db.table("Oversized").unwrap_err();
+    assert_eq!(value_error.kind(), ErrorKind::ResourceLimit);
+    assert!(
+        value_error
+            .contexts()
+            .any(|context| context.table.as_deref() == Some("Oversized"))
+    );
+    assert!(
+        value_error
+            .contexts()
+            .any(|context| context.field.as_deref() == Some("Data"))
+    );
+    assert!(
+        value_error
+            .contexts()
+            .any(|context| context.path.as_ref() == Some(&path))
+    );
+    let execution_error = db.table("Expensive").unwrap_err();
+    assert_eq!(execution_error.kind(), ErrorKind::ResourceLimit);
+    assert!(matches!(
+        execution_error.root_error(),
+        Error::ResourceLimit {
+            resource: "vm_operations",
+            ..
+        }
+    ));
+
+    let dir = tempfile::tempdir().unwrap();
+    let invalid = dir.path().join("invalid.tdf");
+    std::fs::write(&invalid, [0x55; 4096]).unwrap();
+    let error = match MetadataDatabase::open(&invalid) {
+        Ok(_) => panic!("invalid SQLite file was accepted"),
+        Err(error) => error,
+    };
+    assert_eq!(error.kind(), ErrorKind::CorruptData);
+    assert!(matches!(error.root_error(), Error::DatabaseSource(_)));
+    assert!(
+        error
+            .contexts()
+            .any(|context| context.path.as_ref() == Some(&invalid))
+    );
 }

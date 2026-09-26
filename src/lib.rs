@@ -35,34 +35,21 @@
 #![forbid(unsafe_code)]
 mod compression;
 mod database;
+mod error;
 mod mass;
 mod mobility;
 mod reader;
 mod schema;
 
 pub use database::{MetadataDatabase, MetadataLimits, MetadataRow};
+pub use error::{Error, ErrorContext, ErrorKind};
+pub(crate) use error::{field, invalid, limit};
 pub use mass::MzModel;
 pub use mobility::MobilityModel;
 pub use reader::TdfReader;
 use serde::Deserialize;
 
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-    #[error("database: {0}")]
-    Database(String),
-    #[error(transparent)]
-    Metadata(#[from] serde_json::Error),
-    #[error("invalid TDF data: {0}")]
-    Invalid(String),
-    #[error("unsupported TDF feature: {0}")]
-    Unsupported(String),
-}
 pub type Result<T> = std::result::Result<T, Error>;
-pub(crate) fn invalid(message: impl Into<String>) -> Error {
-    Error::Invalid(message.into())
-}
 
 /// Resource ceilings checked before allocating compressed or decoded frame buffers.
 #[derive(Clone, Copy, Debug)]

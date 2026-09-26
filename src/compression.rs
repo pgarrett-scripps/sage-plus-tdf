@@ -1,6 +1,6 @@
 //! TDF decoding derived from MannLabs TimsRust compression1 and compression2.
 //! Counts, extents and arithmetic are validated before indexing or allocation.
-use crate::{Frame, Limits, Result, invalid};
+use crate::{Error, Frame, Limits, Result, invalid, limit};
 use std::io::Read;
 
 pub(crate) fn word(data: &[u8], offset: usize) -> Result<u32> {
@@ -25,7 +25,13 @@ pub(crate) fn decode(
     peaks: usize,
     limits: Limits,
 ) -> Result<Frame> {
-    if scans > limits.max_scans || peaks > limits.max_peaks || (scans == 0 && peaks != 0) {
+    if scans > limits.max_scans {
+        return Err(limit("scans", limits.max_scans, scans));
+    }
+    if peaks > limits.max_peaks {
+        return Err(limit("peaks", limits.max_peaks, peaks));
+    }
+    if scans == 0 && peaks != 0 {
         return Err(invalid("invalid scan or peak count"));
     }
     let minimum_bytes = peaks
@@ -33,7 +39,11 @@ pub(crate) fn decode(
         .and_then(|n| scans.checked_mul(4).and_then(|s| n.checked_add(s)))
         .ok_or_else(|| invalid("decoded extent overflow"))?;
     if minimum_bytes > limits.max_decompressed_bytes {
-        return Err(invalid("decompressed frame limit exceeded"));
+        return Err(limit(
+            "decompressed_bytes",
+            limits.max_decompressed_bytes,
+            minimum_bytes,
+        ));
     }
     let mut frame = Frame {
         id,
@@ -68,18 +78,41 @@ fn decode_v2(
         .and_then(|n| n.checked_mul(4))
         .ok_or_else(|| invalid("decoded extent overflow"))?;
     if expected > limits.max_decompressed_bytes {
-        return Err(invalid("decompressed frame limit exceeded"));
+        return Err(limit(
+            "decompressed_bytes",
+            limits.max_decompressed_bytes,
+            expected,
+        ));
     }
     let mut decoder = ruzstd::decoding::StreamingDecoder::new_with_max_window_size(
         data,
         limits.max_decompressed_bytes as u64,
     )
-    .map_err(|e| invalid(format!("zstd: {e}")))?;
+    .map_err(|source| {
+        if let ruzstd::decoding::errors::FrameDecoderError::WindowSizeTooBig { requested, max } =
+            &source
+        {
+            return Error::ResourceLimit {
+                resource: "zstandard_window_bytes",
+                maximum: *max,
+                observed: *requested,
+                source: Some(Box::new(source)),
+            };
+        }
+        Error::Decoder {
+            format: "Zstandard",
+            source: Box::new(source),
+        }
+    })?;
     let mut decoded = Vec::with_capacity(expected);
     decoder
         .by_ref()
         .take(expected as u64 + 1)
-        .read_to_end(&mut decoded)?;
+        .read_to_end(&mut decoded)
+        .map_err(|source| Error::Decoder {
+            format: "Zstandard",
+            source: Box::new(source),
+        })?;
     if !decoder.decoder.is_finished() || !decoder.get_ref().is_empty() {
         return Err(invalid(
             "incomplete Zstandard frame or trailing compressed bytes",
@@ -197,9 +230,15 @@ fn decode_v1(
             let remaining = limits
                 .max_decompressed_bytes
                 .checked_sub(decoded_bytes)
-                .ok_or_else(|| invalid("decompression limit exceeded"))?;
+                .ok_or_else(|| {
+                    limit(
+                        "decompressed_bytes",
+                        limits.max_decompressed_bytes,
+                        decoded_bytes,
+                    )
+                })?;
             let bytes = lzf::decompress(&data[start..end], per_scan_limit.min(remaining))
-                .map_err(|e| invalid(format!("lzf: {e:?}")))?;
+                .map_err(Error::Lzf)?;
             decoded_bytes += bytes.len();
             if bytes.len() % 4 != 0 {
                 return Err(invalid("partial LZF word"));

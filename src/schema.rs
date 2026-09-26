@@ -1,7 +1,7 @@
 //! TDF schema interpretation, separate from generic SQLite access and binary I/O.
 use crate::{
-    Error, FrameInfo, Limits, MetadataDatabase, MetadataLimits, MetadataRow, MobilityModel,
-    MzModel, Result, invalid,
+    Error, ErrorContext, FrameInfo, Limits, MetadataDatabase, MetadataLimits, MetadataRow,
+    MobilityModel, MzModel, Result, field, invalid, limit,
 };
 use std::{cell::OnceCell, collections::BTreeMap, path::Path};
 
@@ -32,11 +32,27 @@ impl TdfMetadata {
             .find(|r| r.get("Key").and_then(|v| v.as_str()) == Some("TimsCompressionType"))
             .and_then(|r| r.get("Value"))
             .and_then(|v| v.as_str())
-            .ok_or_else(|| invalid("missing TimsCompressionType"))?
+            .ok_or_else(|| {
+                field(
+                    invalid("missing TimsCompressionType"),
+                    "GlobalMetadata",
+                    "TimsCompressionType",
+                )
+            })?
             .parse::<u32>()
-            .map_err(|_| invalid("invalid TimsCompressionType"))?;
+            .map_err(|source| {
+                field(
+                    Error::ParseInteger(source),
+                    "GlobalMetadata",
+                    "TimsCompressionType",
+                )
+            })?;
         if !matches!(compression, 1 | 2) {
-            return Err(Error::Unsupported(format!("compression {compression}")));
+            return Err(field(
+                Error::Unsupported(format!("compression {compression}")),
+                "GlobalMetadata",
+                "TimsCompressionType",
+            ));
         }
         Ok(compression)
     }
@@ -48,63 +64,172 @@ impl TdfMetadata {
     ) -> Result<BTreeMap<u64, FrameInfo>> {
         let mut frames = BTreeMap::new();
         for row in self.database.table("Frames")? {
-            let frame: FrameInfo =
-                serde_json::from_value(serde_json::Value::Object(canonical_columns(row)?))?;
-            if frame.id == 0
-                || !frame.retention_time_seconds.is_finite()
-                || frame.retention_time_seconds < 0.0
-                || frame.scan_count > limits.max_scans
-                || frame.peak_count > limits.max_peaks
-                || frame
-                    .binary_offset
-                    .checked_add(8)
-                    .is_none_or(|end| end > binary_length)
-            {
-                return Err(invalid("invalid frame metadata or resource limit exceeded"));
-            }
-            if frames.insert(frame.id, frame).is_some() {
-                return Err(invalid("duplicate frame identifier"));
+            let row = canonical_columns(row).map_err(|error| field(error, "Frames", "columns"))?;
+            let id = row.get("Id").and_then(|value| value.as_u64());
+            let frame = parse_frame(&row)
+                .and_then(|frame| {
+                    validate_frame(&frame, limits, binary_length)?;
+                    Ok(frame)
+                })
+                .map_err(|error| {
+                    error.with_context(ErrorContext {
+                        frame_id: id,
+                        table: Some("Frames".into()),
+                        ..Default::default()
+                    })
+                })?;
+            let id = frame.id;
+            if frames.insert(id, frame).is_some() {
+                return Err(field(invalid("duplicate frame identifier"), "Frames", "Id")
+                    .with_context(ErrorContext {
+                        frame_id: Some(id),
+                        ..Default::default()
+                    }));
             }
         }
         Ok(frames)
     }
 
     pub(crate) fn mobility_model(&self, frame: &FrameInfo) -> Result<MobilityModel> {
-        let id = frame
-            .mobility_calibration_id
-            .ok_or_else(|| invalid("frame has no TimsCalibration reference"))?;
+        let id = frame.mobility_calibration_id.ok_or_else(|| {
+            field(
+                invalid("missing calibration reference"),
+                "Frames",
+                "TimsCalibration",
+            )
+        })?;
         let row = self
             .mobility_rows
             .get(&self.database)?
             .get(&id)
-            .ok_or_else(|| invalid("missing referenced mobility calibration"))?;
-        if row.get("ModelType").and_then(|v| v.as_u64()) != Some(2) {
-            return Err(Error::Unsupported("mobility ModelType must be 2".into()));
+            .ok_or_else(|| {
+                field(
+                    invalid(format!("missing calibration identifier {id}")),
+                    "TimsCalibration",
+                    "Id",
+                )
+            })?;
+        let model_type = row
+            .get("ModelType")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| {
+                field(
+                    invalid("missing or noninteger model type"),
+                    "TimsCalibration",
+                    "ModelType",
+                )
+            })?;
+        if model_type != 2 {
+            return Err(field(
+                Error::Unsupported("mobility ModelType must be 2".into()),
+                "TimsCalibration",
+                "ModelType",
+            ));
         }
         let mut coefficients = [0.0; 10];
         for (i, c) in coefficients.iter_mut().enumerate() {
             *c = row
                 .get(&format!("C{i}"))
                 .and_then(|v| v.as_f64())
-                .ok_or_else(|| invalid("missing calibration coefficient"))?;
+                .ok_or_else(|| {
+                    field(
+                        invalid("missing calibration coefficient"),
+                        "TimsCalibration",
+                        &format!("C{i}"),
+                    )
+                })?;
         }
         MobilityModel::new(coefficients)
     }
 
     pub(crate) fn mz_model(&self, frame: &FrameInfo) -> Result<MzModel> {
-        let id = frame
-            .mz_calibration_id
-            .ok_or_else(|| invalid("frame has no MzCalibration reference"))?;
+        let id = frame.mz_calibration_id.ok_or_else(|| {
+            field(
+                invalid("missing calibration reference"),
+                "Frames",
+                "MzCalibration",
+            )
+        })?;
         let temperature = frame
             .temperature
-            .ok_or_else(|| invalid("frame has no T1 temperature"))?;
-        let row = self
-            .mz_rows
-            .get(&self.database)?
-            .get(&id)
-            .ok_or_else(|| invalid("missing referenced m/z calibration"))?;
+            .ok_or_else(|| field(invalid("missing frame temperature"), "Frames", "T1"))?;
+        let row = self.mz_rows.get(&self.database)?.get(&id).ok_or_else(|| {
+            field(
+                invalid(format!("missing calibration identifier {id}")),
+                "MzCalibration",
+                "Id",
+            )
+        })?;
         MzModel::from_metadata(row, temperature)
     }
+}
+
+pub(super) fn parse_frame(row: &MetadataRow) -> Result<FrameInfo> {
+    fn required<T: serde::de::DeserializeOwned>(row: &MetadataRow, name: &str) -> Result<T> {
+        serde_json::from_value(row.get(name).cloned().unwrap_or(serde_json::Value::Null))
+            .map_err(|source| field(Error::Metadata(source), "Frames", name))
+    }
+    fn optional<T: serde::de::DeserializeOwned>(
+        row: &MetadataRow,
+        name: &str,
+    ) -> Result<Option<T>> {
+        if row.get(name).is_none_or(|value| value.is_null()) {
+            return Ok(None);
+        }
+        required(row, name).map(Some)
+    }
+    Ok(FrameInfo {
+        id: required(row, "Id")?,
+        retention_time_seconds: required(row, "Time")?,
+        msms_type: required(row, "MsMsType")?,
+        scan_count: required(row, "NumScans")?,
+        peak_count: required(row, "NumPeaks")?,
+        binary_offset: required(row, "TimsId")?,
+        mobility_calibration_id: optional(row, "TimsCalibration")?,
+        mz_calibration_id: optional(row, "MzCalibration")?,
+        temperature: optional(row, "T1")?,
+        polarity: optional(row, "Polarity")?,
+        accumulation_time_ms: optional(row, "AccumulationTime")?,
+    })
+}
+
+pub(super) fn validate_frame(frame: &FrameInfo, limits: Limits, binary_length: u64) -> Result<()> {
+    if frame.id == 0 {
+        return Err(field(invalid("zero frame identifier"), "Frames", "Id"));
+    }
+    if !frame.retention_time_seconds.is_finite() || frame.retention_time_seconds < 0.0 {
+        return Err(field(invalid("invalid retention time"), "Frames", "Time"));
+    }
+    if frame.scan_count > limits.max_scans {
+        return Err(field(
+            limit("scans", limits.max_scans, frame.scan_count),
+            "Frames",
+            "NumScans",
+        ));
+    }
+    if frame.peak_count > limits.max_peaks {
+        return Err(field(
+            limit("peaks", limits.max_peaks, frame.peak_count),
+            "Frames",
+            "NumPeaks",
+        ));
+    }
+    if frame
+        .binary_offset
+        .checked_add(8)
+        .is_none_or(|end| end > binary_length)
+    {
+        return Err(field(
+            invalid("frame header is outside binary file"),
+            "Frames",
+            "TimsId",
+        )
+        .with_context(ErrorContext {
+            byte_offset: Some(frame.binary_offset),
+            ..Default::default()
+        }));
+    }
+    Ok(())
 }
 
 // A table and its lazy rows share one owner so callers cannot mix calibration caches.
@@ -127,12 +252,15 @@ impl CalibrationRows {
         let mut rows = BTreeMap::new();
         for row in database.table(self.table)? {
             let row = canonical_columns(row)?;
-            let id = row
-                .get("Id")
-                .and_then(|v| v.as_u64())
-                .ok_or_else(|| invalid("invalid calibration identifier"))?;
+            let id = row.get("Id").and_then(|v| v.as_u64()).ok_or_else(|| {
+                field(invalid("invalid calibration identifier"), self.table, "Id")
+            })?;
             if rows.insert(id, row).is_some() {
-                return Err(invalid("duplicate calibration identifier"));
+                return Err(field(
+                    invalid("duplicate calibration identifier"),
+                    self.table,
+                    "Id",
+                ));
             }
         }
         Ok(self.rows.get_or_init(|| rows))
@@ -140,7 +268,7 @@ impl CalibrationRows {
 }
 
 // SQLite identifiers are ASCII case insensitive. Public metadata retains source spelling.
-fn canonical_columns(row: MetadataRow) -> Result<MetadataRow> {
+pub(super) fn canonical_columns(row: MetadataRow) -> Result<MetadataRow> {
     const NAMES: &[&str] = &[
         "Id",
         "Time",
@@ -202,8 +330,13 @@ mod tests {
         .unwrap();
         let normalized = canonical_columns(row).unwrap();
         assert_eq!(normalized["VendorExtension"], "source value");
+        let error = parse_frame(&normalized).unwrap_err();
+        assert_eq!(error.kind(), crate::ErrorKind::CorruptData);
         assert!(
-            serde_json::from_value::<FrameInfo>(serde_json::Value::Object(normalized)).is_err()
+            error
+                .contexts()
+                .any(|context| context.field.as_deref() == Some("Id"))
         );
+        assert!(matches!(error.root_error(), Error::Metadata(_)));
     }
 }

@@ -1,6 +1,6 @@
 # Public release preparation
 
-The candidate version is `0.1.1-rc.1`. The repository remains private and `publish = false` remains in the real manifest. No crates.io package or hosted docs.rs page is claimed to exist. This document prepares a future launch and does not authorize publishing, changing repository visibility or creating a release tag.
+The candidate version is `0.1.1-rc.2`. The repository remains private and `publish = false` remains in the real manifest. No crates.io package or hosted docs.rs page is claimed to exist. This document prepares a future launch and does not authorize publishing, changing repository visibility or creating a release tag.
 
 ## Naming and provenance
 
@@ -34,7 +34,7 @@ A future public launch requires a separate explicit instruction from the reposit
 
 1. Resolve naming, attribution, fixture redistribution and historical-content findings.
 2. Confirm a private vulnerability reporting channel, repository ownership and the intended crates.io owner account.
-3. Verify that `0.1.1-rc.1` remains the intended public candidate. Keep the existing private `v0.1.0` release immutable. A changed candidate needs its own version decision.
+3. Verify that `0.1.1-rc.2` remains the intended public candidate. Keep the existing private `v0.1.0` release immutable. A changed candidate needs its own version decision.
 4. Recheck the registry name, pinned dependency advisories and exact candidate CI results on Linux, macOS and Windows.
 5. Review the actual `.crate` file list, unpack it and rerun its tests. Record the archive SHA256 and source commit.
 6. After explicit authorization, make only the agreed visibility and publication changes, then verify the resulting registry package and documentation.
