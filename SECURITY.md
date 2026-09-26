@@ -1,6 +1,6 @@
 # Security
 
-The current 0.1 series receives fixes on `main`. This project has no guaranteed response time or long-term support commitment.
+The private 0.1 series and unpublished `0.1.1-rc.1` candidate receive fixes on `main`. This project has no guaranteed response time or long-term support commitment.
 
 For a suspected security problem, contact the repository owner privately through an existing authenticated channel. GitHub private vulnerability reporting may be used if it is enabled for the repository. Do not open a public issue containing an exploit, credentials or confidential acquisition data. A dedicated public reporting channel must be confirmed before public launch.
 

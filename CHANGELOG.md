@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.1-rc.1, unpublished public release candidate
 
 - Prepare package discovery metadata, compiled API examples and a docs.rs-compatible documentation build.
 - Retain the Sage and tdfpy MIT notices alongside the existing MannLabs MIT and Apache-2.0 texts.

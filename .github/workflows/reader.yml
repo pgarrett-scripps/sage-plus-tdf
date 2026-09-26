@@ -22,7 +22,7 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
       - run: cargo package --locked
-      - run: cargo test --locked --manifest-path target/package/timsrust-reader-0.1.0/Cargo.toml --target-dir target
+      - run: cargo test --locked --manifest-path target/package/timsrust-reader-0.1.1-rc.1/Cargo.toml --target-dir target
       - run: cargo doc --locked --no-deps
         env:
           RUSTDOCFLAGS: -D warnings

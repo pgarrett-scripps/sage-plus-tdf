@@ -2,7 +2,7 @@
 
 A read-only Rust reader for completed Bruker TDF `.d` directories. Derived from MannLabs TimsRust 0.6.6 at `80e235a`, with upstream history retained.
 
-The repository currently remains private while public distribution is prepared. The crate has not been published to crates.io, and no hosted API documentation is available yet. This project is an independent derivative, not an upstream MannLabs release or an official Bruker product.
+The `0.1.1-rc.1` public release candidate is prepared in a private repository. The crate has not been published to crates.io, and no hosted API documentation is available yet. This project is an independent derivative, not an upstream MannLabs release or an official Bruker product.
 
 The library exposes original frame IDs, scan offsets, TOF indices, detector intensities and source SQLite metadata. It does not generate pseudo-DDA spectra, merge DIA windows, centroid peaks or write acquisition files.
 

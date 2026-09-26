@@ -10,9 +10,7 @@ import tempfile
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--offline", action="store_true", help="Use cached Cargo dependencies")
-    args = parser.parse_args()
+    argparse.ArgumentParser(description=__doc__).parse_args()
     root = Path(__file__).resolve().parent.parent
     manifest = root / "Cargo.toml"
     original = manifest.read_bytes()
@@ -33,8 +31,6 @@ def main():
         staged_manifest.write_bytes(original.replace(b"publish = false", b'publish = ["crates-io"]', 1))
         environment["CARGO_TARGET_DIR"] = str(root / "target" / "publication-preflight")
         command = ["cargo", "publish", "--dry-run", "--locked", "--registry", "crates-io"]
-        if args.offline:
-            command.append("--offline")
         try:
             subprocess.run(command, cwd=stage, env=environment, check=True)
         finally:
