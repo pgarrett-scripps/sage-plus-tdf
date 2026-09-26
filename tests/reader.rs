@@ -183,3 +183,23 @@ fn source_mass_model_uses_temperature_and_canonical_column_names() {
     row.insert("C1".into(), (-1).into());
     assert!(timsrust_reader::MzModel::from_metadata(&row, 26.0).is_err());
 }
+
+#[test]
+fn concurrent_metadata_queries_keep_independent_budgets() {
+    let db = MetadataDatabase::with_limits(
+        fixture().parent().unwrap().join("metadata.d/analysis.tdf"),
+        timsrust_reader::MetadataLimits {
+            max_vm_operations: 10_000,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    std::thread::scope(|scope| {
+        for _ in 0..4 {
+            scope.spawn(|| {
+                assert!(db.table("Expensive").is_err());
+                assert_eq!(db.table("Frames").unwrap().len(), 2);
+            });
+        }
+    });
+}

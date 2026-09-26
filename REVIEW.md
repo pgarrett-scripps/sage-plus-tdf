@@ -22,7 +22,7 @@ The database is opened using `OpenFlags::ReadOnly`. Missing paths are rejected b
 
 ## Validation
 
-Formatting, Clippy with warnings denied, 5 decoder unit tests and 7 integration tests pass on Linux. Tests cover read-only behavior without sidecars, source hashes, SQLite views, casing, quoted identifiers, blob values, sparse IDs, empty tables, active journals, limits, malformed LZF offsets and source mobility reference values.
+Formatting, Clippy with warnings denied, 5 decoder unit tests and 8 integration tests pass on Linux. Tests cover read-only behavior without sidecars, source hashes, SQLite views, casing, quoted identifiers, blob values, sparse IDs, empty tables, active journals, limits, malformed LZF offsets and source mobility reference values.
 
 Independent fixture generation uses SQLite from Python's standard library and libzstd to create static test assets. Neither is a runtime dependency of this reader. Both compression modes have synthetic regression coverage. The local DDA and DIA acquisitions exercise Zstandard decoding.
 
@@ -41,3 +41,5 @@ The complete raw frame digests, including source frame ID, scan offsets, TOF ind
 ## Release hardening
 
 The second review fixed unchecked Zstandard checksums and trailing compressed bytes, rejected unreferenced LZF bytes, bounded metadata queries, preserved case-insensitive typed column lookup and cached source calibration tables. Checksum corruption, every truncation of a checked Zstandard fixture, LZF gaps, recursive views, oversized metadata, temperature dependence and unsupported mass terms have regression coverage. Rust 1.97.1 is pinned, the new Clippy lint is resolved, and CI verifies the distributable package and documentation on each platform. Public registry publication is disabled.
+
+Metadata queries on one database are serialized so concurrent callers cannot replace the connection-scoped VM budget handler. A concurrent interruption and recovery test covers this contract.

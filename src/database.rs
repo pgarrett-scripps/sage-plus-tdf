@@ -2,7 +2,7 @@ use crate::{Error, Result, invalid};
 use std::{
     path::Path,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
@@ -40,6 +40,7 @@ pub struct MetadataDatabase {
     connection: Arc<turso_core::Connection>,
     io: Arc<dyn IO>,
     limits: MetadataLimits,
+    query_lock: Mutex<()>,
 }
 fn db_error(e: impl std::fmt::Display) -> Error {
     Error::Database(e.to_string())
@@ -78,6 +79,7 @@ impl MetadataDatabase {
             connection: db.connect().map_err(db_error)?,
             io,
             limits,
+            query_lock: Mutex::new(()),
         })
     }
 
@@ -107,6 +109,11 @@ impl MetadataDatabase {
     }
 
     fn query(&self, sql: &str) -> Result<Vec<MetadataRow>> {
+        // The progress handler belongs to the connection, so query budgets must not overlap.
+        let _guard = self
+            .query_lock
+            .lock()
+            .map_err(|_| invalid("metadata query lock poisoned"))?;
         let started = Instant::now();
         let limits = self.limits;
         let operations = AtomicU64::new(0);
