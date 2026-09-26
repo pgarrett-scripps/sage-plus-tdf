@@ -1,0 +1,32 @@
+{
+  "upstream_commit": "80e235a331057e0ef922eb3c784b7a631c9b9666",
+  "engine": "turso_core 0.8.0-pre.13",
+  "platform": "Linux x86_64",
+  "raw_digest_encoding": "Frame ID u64 LE, scan offsets u64 LE, then paired TOF and intensity u32 LE, frames ordered by ID",
+  "fixtures": [
+    {
+      "frames": 4,
+      "peaks": 136,
+      "raw_digest": "ed3652a7a681da8f5d25e26e0b8b06f700597a0d9607ce473ad45e7230b66e52",
+      "fixture": "timsrust-dda.d",
+      "upstream_raw_digest": "ed3652a7a681da8f5d25e26e0b8b06f700597a0d9607ce473ad45e7230b66e52",
+      "matches_upstream": true,
+      "files": {
+        "analysis.tdf": "aad98ce6761ca4fabcd75a18dd682278cad1133081cb13b0994636de4c0809db",
+        "analysis.tdf_bin": "f9d90249f3d0abd320db70379ca29e2d0deb6498e47bf992404c978599570168"
+      }
+    },
+    {
+      "frames": 6,
+      "peaks": 9050385,
+      "raw_digest": "b79ee165a93e534cb36c05366825766350e58d6e4e656e55edc9a01311f42c23",
+      "fixture": "timsrust-dia.d",
+      "upstream_raw_digest": "b79ee165a93e534cb36c05366825766350e58d6e4e656e55edc9a01311f42c23",
+      "matches_upstream": true,
+      "files": {
+        "analysis.tdf": "e8628dd512350c9f760a38bf31be5aaf502d9e293a0246e9c5b457a42df169df",
+        "analysis.tdf_bin": "663fc5e676ff98769670a56389108bd9fc1d2ebb06d98a3b09539713d984d8ad"
+      }
+    }
+  ]
+}
