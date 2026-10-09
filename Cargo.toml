@@ -7,7 +7,7 @@ publish = false
 readme = "README.md"
 license = "Apache-2.0 AND MIT"
 description = "Read-only pure Rust reader for Bruker TDF frames, calibration and metadata tables, used by Sage Plus"
-repository = "https://github.com/pgarrett-scripps/timsrust-reader"
+repository = "https://github.com/pgarrett-scripps/sage-plus-tdf"
 keywords = ["mass-spectrometry", "bruker", "tdf", "proteomics"]
 categories = ["science", "parser-implementations"]
 
