@@ -243,22 +243,25 @@ fn decode_v1(
             if bytes.len() % 4 != 0 {
                 return Err(invalid("partial LZF word"));
             }
-            let mut tof = 0i64;
+            // As libtimsdata decodes it: a negative word skips that many TOF
+            // bins, a positive word is the intensity at the current bin, which
+            // then advances by one.
+            let mut tof = 0u64;
             for bytes in bytes.as_chunks::<4>().0 {
                 let value = i32::from_le_bytes(*bytes);
                 if value > 0 {
-                    tof -= 1;
                     frame
                         .tof_indices
-                        .push(u32::try_from(-tof).map_err(|_| invalid("TOF range overflow"))?);
+                        .push(u32::try_from(tof).map_err(|_| invalid("TOF range overflow"))?);
                     frame.intensities.push(value as u32);
                     if frame.intensities.len() > peaks {
                         return Err(invalid("too many decoded peaks"));
                     }
+                    tof += 1;
+                } else if value < 0 {
+                    tof += u64::from(value.unsigned_abs());
                 } else {
-                    tof = tof
-                        .checked_add(i64::from(value) + 1)
-                        .ok_or_else(|| invalid("TOF accumulation overflow"))?;
+                    return Err(invalid("zero word in LZF scan"));
                 }
             }
         }
@@ -322,6 +325,41 @@ mod tests {
         for end in 0..compressed.len() {
             assert!(decode(2, 1, &compressed[..end], 3, 3, Limits::default()).is_err());
         }
+    }
+
+    fn lzf_frame(scans: &[&[i32]]) -> Vec<u8> {
+        // Literal-only LZF blocks (at most 32 bytes each) behind the offset table.
+        let blocks: Vec<Vec<u8>> = scans
+            .iter()
+            .map(|words| {
+                let raw: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+                if raw.is_empty() {
+                    return raw;
+                }
+                assert!(raw.len() <= 32);
+                [vec![raw.len() as u8 - 1], raw].concat()
+            })
+            .collect();
+        let mut offset = 8 + 4 * (scans.len() + 1);
+        let mut table = vec![offset as u32];
+        for block in &blocks {
+            offset += block.len();
+            table.push(offset as u32);
+        }
+        let mut data: Vec<u8> = table.iter().flat_map(|w| w.to_le_bytes()).collect();
+        data.extend(blocks.concat());
+        data
+    }
+
+    #[test]
+    fn lzf_gaps_skip_bins_and_peaks_advance_one_bin_like_libtimsdata() {
+        let data = lzf_frame(&[&[-10, 5, -3, 7, 9], &[], &[-2, 1]]);
+        let frame = decode(1, 1, &data, 3, 4, Limits::default()).unwrap();
+        assert_eq!(frame.scan_offsets, [0, 3, 3, 4]);
+        assert_eq!(frame.tof_indices, [10, 14, 15, 2]);
+        assert_eq!(frame.intensities, [5, 7, 9, 1]);
+        let zero = lzf_frame(&[&[-10, 0, 5]]);
+        assert!(decode(1, 1, &zero, 1, 1, Limits::default()).is_err());
     }
 
     #[test]

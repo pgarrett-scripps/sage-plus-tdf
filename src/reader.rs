@@ -218,7 +218,15 @@ impl TdfReader {
                 "frame_size",
             ));
         }
-        if scans != info.scan_count {
+        // libtimsdata takes the LZF scan count from the frame header, which can
+        // exceed Frames.NumScans; NumPeaks must still match the decoded total.
+        if self.compression == 1 && scans > self.limits.max_scans {
+            return Err(header_field(
+                limit("scans", self.limits.max_scans, scans),
+                "frame_scans",
+            ));
+        }
+        if self.compression != 1 && scans != info.scan_count {
             return Err(header_field(
                 invalid(format!(
                     "binary scan count {scans} differs from metadata count {}",
