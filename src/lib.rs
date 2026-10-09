@@ -40,14 +40,18 @@ mod mass;
 mod mobility;
 mod reader;
 mod schema;
+mod tables;
 
-pub use database::{MetadataDatabase, MetadataLimits, MetadataRow};
+pub use database::{MetadataDatabase, MetadataLimits, MetadataRow, SqlValue};
 pub use error::{Error, ErrorContext, ErrorKind};
 pub(crate) use error::{field, invalid, limit};
 pub use mass::{LinearMzScale, MzCalibration, MzModel};
 pub use mobility::{LinearMobilityScale, MobilityModel};
 pub use reader::TdfReader;
-use serde::Deserialize;
+pub use tables::{
+    AcquisitionType, DiaFrameMsMsInfo, DiaFrameMsMsWindow, DiaFrameMsMsWindowGroup, FrameInfo,
+    GlobalMetadata, PasefFrameMsMsInfo, Precursor, TimsCalibration,
+};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -72,35 +76,6 @@ impl Default for Limits {
     }
 }
 
-/// Source frame identifiers and counts, without renumbering or inferred acquisition types.
-#[derive(Clone, Debug, Deserialize)]
-pub struct FrameInfo {
-    #[serde(rename = "Id")]
-    pub id: u64,
-    #[serde(rename = "Time")]
-    pub retention_time_seconds: f64,
-    #[serde(rename = "MsMsType")]
-    pub msms_type: u32,
-    #[serde(rename = "NumScans")]
-    pub scan_count: usize,
-    #[serde(rename = "NumPeaks")]
-    pub peak_count: usize,
-    #[serde(rename = "TimsId")]
-    pub binary_offset: u64,
-    #[serde(rename = "TimsCalibration", default)]
-    pub mobility_calibration_id: Option<u64>,
-    #[serde(rename = "MzCalibration", default)]
-    pub mz_calibration_id: Option<u64>,
-    #[serde(rename = "T1", default)]
-    pub t1: Option<f64>,
-    #[serde(rename = "T2", default)]
-    pub t2: Option<f64>,
-    #[serde(rename = "Polarity", default)]
-    pub polarity: Option<String>,
-    #[serde(rename = "AccumulationTime", default)]
-    pub accumulation_time_ms: Option<f64>,
-}
-
 /// Original raw coordinates and counts. Intensities are not rescaled.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Frame {
@@ -108,4 +83,12 @@ pub struct Frame {
     pub scan_offsets: Vec<usize>,
     pub tof_indices: Vec<u32>,
     pub intensities: Vec<u32>,
+}
+
+impl Frame {
+    /// Scans stored in the binary frame. This is `Frames.NumScans` for Zstandard
+    /// frames; LZF frames may store more.
+    pub fn scan_count(&self) -> usize {
+        self.scan_offsets.len().saturating_sub(1)
+    }
 }

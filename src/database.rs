@@ -35,7 +35,105 @@ impl Default for MetadataLimits {
     }
 }
 
-pub type MetadataRow = serde_json::Map<String, serde_json::Value>;
+/// One SQLite value, kept in its stored type. Blobs stay bytes and REAL values
+/// keep infinities and NaN; typed readers decide what a column may hold.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SqlValue {
+    Null,
+    Integer(i64),
+    Real(f64),
+    Text(String),
+    Blob(Vec<u8>),
+}
+impl SqlValue {
+    pub fn is_null(&self) -> bool {
+        matches!(self, Self::Null)
+    }
+    /// Integers only. REAL values are never truncated.
+    pub fn as_i64(&self) -> Option<i64> {
+        match self {
+            Self::Integer(n) => Some(*n),
+            _ => None,
+        }
+    }
+    /// REAL or INTEGER values. SQLite stores integral REAL values as integers in
+    /// untyped columns, so both are numbers here.
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            Self::Integer(n) => Some(*n as f64),
+            Self::Real(x) => Some(*x),
+            _ => None,
+        }
+    }
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::Text(s) => Some(s),
+            _ => None,
+        }
+    }
+    pub fn as_blob(&self) -> Option<&[u8]> {
+        match self {
+            Self::Blob(b) => Some(b),
+            _ => None,
+        }
+    }
+}
+
+/// One result row with the source column spelling. Lookups by name ignore
+/// ASCII case, as SQLite identifiers do.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MetadataRow {
+    columns: Arc<[String]>,
+    values: Vec<SqlValue>,
+}
+impl MetadataRow {
+    /// Column names must be distinct ignoring ASCII case and match the values.
+    pub fn new(columns: Vec<String>, values: Vec<SqlValue>) -> Result<Self> {
+        check_columns(&columns)?;
+        if columns.len() != values.len() {
+            return Err(invalid(
+                "metadata row has a different number of values and columns",
+            ));
+        }
+        Ok(Self {
+            columns: columns.into(),
+            values,
+        })
+    }
+    pub fn columns(&self) -> &[String] {
+        &self.columns
+    }
+    pub fn values(&self) -> &[SqlValue] {
+        &self.values
+    }
+    pub fn get(&self, name: &str) -> Option<&SqlValue> {
+        self.columns
+            .iter()
+            .position(|column| column.eq_ignore_ascii_case(name))
+            .map(|i| &self.values[i])
+    }
+    pub fn contains_key(&self, name: &str) -> bool {
+        self.get(name).is_some()
+    }
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &SqlValue)> {
+        self.columns.iter().map(String::as_str).zip(&self.values)
+    }
+}
+
+fn check_columns(columns: &[String]) -> Result<()> {
+    for (i, name) in columns.iter().enumerate() {
+        if columns[..i].iter().any(|c| c.eq_ignore_ascii_case(name)) {
+            return Err(
+                invalid("ambiguous metadata column spelling").with_context(ErrorContext {
+                    field: Some(name.clone()),
+                    ..Default::default()
+                }),
+            );
+        }
+    }
+    Ok(())
+}
+
 pub struct MetadataDatabase {
     connection: Arc<turso_core::Connection>,
     io: Arc<dyn IO>,
@@ -99,11 +197,16 @@ impl MetadataDatabase {
             .into_iter()
             .map(|r| {
                 r.get("name")
-                    .and_then(|v| v.as_str())
+                    .and_then(SqlValue::as_str)
                     .map(str::to_owned)
                     .ok_or_else(|| invalid("invalid schema object name"))
             })
             .collect()
+    }
+
+    /// Whether a table or view of this name exists, ignoring ASCII case.
+    pub fn has_table(&self, name: &str) -> Result<bool> {
+        Ok(self.tables()?.iter().any(|s| s.eq_ignore_ascii_case(name)))
     }
 
     /// Preserve all source columns, including vendor extensions and metadata views.
@@ -186,6 +289,8 @@ impl MetadataDatabase {
         let columns: Vec<_> = (0..statement.num_columns())
             .map(|i| statement.get_column_name(i).into_owned())
             .collect();
+        check_columns(&columns)?;
+        let columns: Arc<[String]> = columns.into();
         let mut rows = Vec::new();
         let mut materialized = 0usize;
         loop {
@@ -224,27 +329,20 @@ impl MetadataDatabase {
                     let row = statement
                         .row()
                         .ok_or_else(|| invalid("missing SQLite row"))?;
-                    let mut values = MetadataRow::new();
+                    let mut values = Vec::with_capacity(columns.len());
                     for (i, name) in columns.iter().enumerate() {
                         let source = row.get_value(i);
-                        let (source_bytes, output_bytes) = match source {
-                            Value::Text(s) => (s.as_str().len(), s.as_str().len()),
-                            Value::Blob(b) => (
-                                b.len(),
-                                b.len()
-                                    .saturating_mul(std::mem::size_of::<serde_json::Value>()),
-                            ),
-                            _ => (8, 8),
+                        let bytes = match source {
+                            Value::Text(s) => s.as_str().len(),
+                            Value::Blob(b) => b.len(),
+                            _ => 8,
                         };
-                        materialized = materialized
-                            .saturating_add(output_bytes)
-                            .saturating_add(name.len())
-                            .saturating_add(128);
-                        if source_bytes > limits.max_value_bytes {
+                        materialized = materialized.saturating_add(bytes).saturating_add(32);
+                        if bytes > limits.max_value_bytes {
                             return Err(limit(
                                 "metadata_value_bytes",
                                 limits.max_value_bytes,
-                                source_bytes,
+                                bytes,
                             )
                             .with_context(ErrorContext {
                                 field: Some(name.clone()),
@@ -262,30 +360,18 @@ impl MetadataDatabase {
                                 ..Default::default()
                             }));
                         }
-                        let value = match source {
-                            Value::Null => serde_json::Value::Null,
-                            Value::Numeric(Numeric::Integer(n)) => (*n).into(),
-                            Value::Numeric(Numeric::Float(n)) => {
-                                serde_json::Number::from_f64(f64::from(*n))
-                                    .map(serde_json::Value::Number)
-                                    .ok_or_else(|| {
-                                        invalid("nonfinite SQLite number").with_context(
-                                            ErrorContext {
-                                                field: Some(name.clone()),
-                                                ..Default::default()
-                                            },
-                                        )
-                                    })?
-                            }
-                            Value::Text(s) => s.as_str().into(),
-                            Value::Blob(b) => {
-                                serde_json::Value::Array(b.iter().map(|x| (*x).into()).collect())
-                            }
-                        };
-                        if values.insert(name.clone(), value).is_some() {
-                            return Err(invalid("duplicate metadata column name"));
-                        }
+                        values.push(match source {
+                            Value::Null => SqlValue::Null,
+                            Value::Numeric(Numeric::Integer(n)) => SqlValue::Integer(*n),
+                            Value::Numeric(Numeric::Float(n)) => SqlValue::Real(f64::from(*n)),
+                            Value::Text(s) => SqlValue::Text(s.as_str().to_owned()),
+                            Value::Blob(b) => SqlValue::Blob(b.to_vec()),
+                        });
                     }
+                    let values = MetadataRow {
+                        columns: columns.clone(),
+                        values,
+                    };
                     rows.push(values);
                 }
                 StepResult::Busy | StepResult::Sleep { .. } => {

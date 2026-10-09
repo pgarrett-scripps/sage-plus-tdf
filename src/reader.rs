@@ -1,7 +1,9 @@
 //! File-backed acquisition access over validated TDF metadata and raw frame decoding.
 use crate::{
-    Error, ErrorContext, Frame, FrameInfo, Limits, MetadataDatabase, MobilityModel, MzModel,
-    Result, compression, invalid, limit, schema::TdfMetadata,
+    AcquisitionType, DiaFrameMsMsInfo, DiaFrameMsMsWindow, DiaFrameMsMsWindowGroup, Error,
+    ErrorContext, Frame, FrameInfo, GlobalMetadata, Limits, LinearMobilityScale, LinearMzScale,
+    MetadataDatabase, MobilityModel, MzCalibration, MzModel, PasefFrameMsMsInfo, Precursor, Result,
+    TimsCalibration, compression, invalid, limit, schema::TdfMetadata,
 };
 use std::{
     collections::BTreeMap,
@@ -15,6 +17,7 @@ use std::{
 pub struct TdfReader {
     directory: PathBuf,
     metadata: TdfMetadata,
+    global: GlobalMetadata,
     binary: File,
     binary_length: u64,
     frames: BTreeMap<u64, FrameInfo>,
@@ -47,13 +50,22 @@ impl TdfReader {
             })?
             .to_path_buf();
         let metadata = TdfMetadata::open(directory.join("analysis.tdf"), limits.metadata)?;
-        let compression = metadata.compression()?;
+        let global = metadata.global_metadata()?;
+        let compression = global.compression_type()?;
+        if !matches!(compression, 1 | 2) {
+            return Err(crate::field(
+                Error::Unsupported(format!("compression {compression}")),
+                "GlobalMetadata",
+                "TimsCompressionType",
+            ));
+        }
         let binary = File::open(directory.join("analysis.tdf_bin"))?;
         let binary_length = binary.metadata()?.len();
         let frames = metadata.frames(limits, binary_length)?;
         Ok(Self {
             directory,
             metadata,
+            global,
             binary,
             binary_length,
             frames,
@@ -65,12 +77,105 @@ impl TdfReader {
     pub fn directory(&self) -> &Path {
         &self.directory
     }
+    /// Untyped access to every table and view, including vendor extensions.
     pub fn metadata(&self) -> &MetadataDatabase {
         &self.metadata.database
+    }
+    pub fn global_metadata(&self) -> &GlobalMetadata {
+        &self.global
     }
     /// Sorted by the original identifier. Sparse identifiers are retained.
     pub fn frames(&self) -> impl Iterator<Item = &FrameInfo> {
         self.frames.values()
+    }
+    pub fn frame(&self, id: u64) -> Option<&FrameInfo> {
+        self.frames.get(&id)
+    }
+    /// Largest `Frames.NumScans`, or 0 without frames.
+    pub fn max_scan_count(&self) -> usize {
+        self.frames
+            .values()
+            .map(|f| f.scan_count)
+            .max()
+            .unwrap_or(0)
+    }
+    /// `TimsCompressionType` (1 LZF, 2 Zstandard).
+    pub fn compression_type(&self) -> u32 {
+        self.compression
+    }
+    pub fn acquisition_type(&self) -> AcquisitionType {
+        if self.frames.values().any(|f| f.msms_type == 8) {
+            AcquisitionType::DdaPasef
+        } else if self.frames.values().any(|f| f.msms_type == 9) {
+            AcquisitionType::DiaPasef
+        } else {
+            AcquisitionType::Unknown
+        }
+    }
+
+    // Typed tables. A table missing from the file has no rows.
+    pub fn pasef_frame_msms_info(&self) -> Result<Vec<PasefFrameMsMsInfo>> {
+        self.in_tdf(self.metadata.pasef_frame_msms_info())
+    }
+    pub fn precursors(&self) -> Result<Vec<Precursor>> {
+        self.in_tdf(self.metadata.precursors())
+    }
+    pub fn dia_frame_msms_info(&self) -> Result<Vec<DiaFrameMsMsInfo>> {
+        self.in_tdf(self.metadata.dia_frame_msms_info())
+    }
+    pub fn dia_frame_msms_windows(&self) -> Result<Vec<DiaFrameMsMsWindow>> {
+        self.in_tdf(self.metadata.dia_frame_msms_windows())
+    }
+    pub fn dia_frame_msms_window_groups(&self) -> Result<Vec<DiaFrameMsMsWindowGroup>> {
+        self.in_tdf(self.metadata.dia_frame_msms_window_groups())
+    }
+    /// `TimsCalibration` rows by `Id`. `FrameInfo::mobility_calibration_id` refers here.
+    pub fn tims_calibrations(&self) -> Result<Vec<TimsCalibration>> {
+        let rows = self
+            .metadata
+            .tims_calibrations()
+            .map(|m| m.values().cloned().collect());
+        self.in_tdf(rows)
+    }
+    /// `MzCalibration` rows by `Id`. `FrameInfo::mz_calibration_id` refers here.
+    pub fn mz_calibrations(&self) -> Result<Vec<MzCalibration>> {
+        let rows = self
+            .metadata
+            .mz_calibrations()
+            .map(|m| m.values().copied().collect());
+        self.in_tdf(rows)
+    }
+
+    /// The uncalibrated m/z scale timsrust 0.6 uses: GlobalMetadata
+    /// `MzAcqRange*` (widened by 5 for `Bruker otofControl`) over `DigitizerNumSamples`.
+    pub fn linear_mz_scale(&self) -> Result<LinearMzScale> {
+        let (mut lower, mut upper) = self.global.mz_acq_range()?;
+        if self.global.acquisition_software() == Some("Bruker otofControl") {
+            lower -= 5.0;
+            upper += 5.0;
+        }
+        LinearMzScale::new(lower, upper, self.global.digitizer_num_samples()?)
+    }
+
+    /// The uncalibrated mobility scale timsrust 0.6 uses: GlobalMetadata
+    /// `OneOverK0AcqRange*` over scans 0 to `max_scan_count() - 1`.
+    pub fn linear_mobility_scale(&self) -> Result<LinearMobilityScale> {
+        let (lower, upper) = self.global.one_over_k0_acq_range()?;
+        let last = self
+            .max_scan_count()
+            .checked_sub(1)
+            .and_then(|n| u32::try_from(n).ok())
+            .ok_or_else(|| invalid("no scans to span the mobility range"))?;
+        LinearMobilityScale::new(lower, upper, last)
+    }
+
+    fn in_tdf<T>(&self, result: Result<T>) -> Result<T> {
+        result.map_err(|error| {
+            error.with_context(ErrorContext {
+                path: Some(self.directory.join("analysis.tdf")),
+                ..Default::default()
+            })
+        })
     }
 
     pub fn read_frame(&self, id: u64) -> Result<Frame> {

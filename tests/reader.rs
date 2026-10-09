@@ -1,6 +1,8 @@
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
-use timsrust_reader::{Limits, MetadataDatabase, MobilityModel, MzCalibration, MzModel, TdfReader};
+use timsrust_reader::{
+    Limits, MetadataDatabase, MobilityModel, MzCalibration, MzModel, SqlValue, TdfReader,
+};
 
 fn fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/synthetic.d")
@@ -35,7 +37,7 @@ fn reads_views_case_variants_sparse_ids_and_raw_ions_without_writes() {
     assert!(reader.read_frame(1).is_err());
     assert!(reader.mobility_model(1).is_err());
     let blob = reader.metadata().table("quoted\"table").unwrap();
-    assert_eq!(blob[0]["Data"], serde_json::json!([1, 2, 255]));
+    assert_eq!(blob[0].get("data"), Some(&SqlValue::Blob(vec![1, 2, 255])));
     assert!(reader.metadata().table("Precursors").unwrap().is_empty());
     drop(reader);
     assert_eq!(digest(&dir.path().join("analysis.tdf")), before);
@@ -442,4 +444,116 @@ fn metadata_limits_and_invalid_database_have_actionable_locations() {
             .contexts()
             .any(|context| context.path.as_ref() == Some(&invalid))
     );
+}
+
+#[test]
+fn typed_tables_follow_the_bruker_schema() {
+    use timsrust_reader::{AcquisitionType, DiaFrameMsMsInfo, DiaFrameMsMsWindowGroup};
+    let path = fixture().parent().unwrap().join("tables.d");
+    let reader = TdfReader::open(&path).unwrap();
+    let frame = reader.frame(10).unwrap();
+    assert_eq!(frame.polarity.as_deref(), Some("+"));
+    assert_eq!(
+        (frame.scan_mode, frame.msms_type, frame.ms_level()),
+        (Some(8), 0, Some(1))
+    );
+    assert_eq!(frame.t2, Some(23.220480964598842));
+    assert_eq!(
+        (frame.max_intensity, frame.summed_intensities),
+        (Some(30), Some(60))
+    );
+    assert_eq!(frame.property_group, Some(1));
+    assert_eq!(frame.ramp_time_ms, Some(100.045));
+    assert!((frame.intensity_correction_factor().unwrap() - 1000.0 / 100.045).abs() < 1e-12);
+    assert_eq!(
+        reader.frame(42).unwrap().intensity_correction_factor(),
+        Some(20.0)
+    );
+    assert_eq!(reader.frame(42).unwrap().ms_level(), Some(2));
+    assert_eq!(reader.acquisition_type(), AcquisitionType::DdaPasef);
+    assert_eq!(reader.max_scan_count(), 3);
+    assert_eq!(reader.compression_type(), 2);
+
+    let global = reader.global_metadata();
+    assert_eq!(global.mz_acq_range().unwrap(), (100.0, 1700.0));
+    assert_eq!(global.one_over_k0_acq_range().unwrap(), (0.6, 1.6));
+    assert_eq!(global.digitizer_num_samples().unwrap(), 397_888);
+    assert_eq!(global.acquisition_software(), Some("Bruker otofControl"));
+    assert!(global.number("Missing").is_err());
+
+    let pasef = reader.pasef_frame_msms_info().unwrap();
+    assert_eq!(pasef.len(), 1);
+    assert_eq!(
+        (
+            pasef[0].frame,
+            pasef[0].scan_num_begin,
+            pasef[0].scan_num_end
+        ),
+        (42, 263, 288)
+    );
+    assert_eq!(pasef[0].precursor, Some(1));
+    let precursors = reader.precursors().unwrap();
+    assert_eq!(precursors[0].charge, Some(2));
+    assert_eq!(precursors[0].scan_number, Some(275.5991596638655));
+    assert_eq!(
+        (precursors[1].monoisotopic_mz, precursors[1].charge),
+        (None, None)
+    );
+    assert_eq!(precursors[1].parent, Some(10));
+    assert_eq!(
+        reader.dia_frame_msms_info().unwrap(),
+        [DiaFrameMsMsInfo {
+            frame: 42,
+            window_group: 1
+        }]
+    );
+    let windows = reader.dia_frame_msms_windows().unwrap();
+    assert_eq!(
+        (windows[0].scan_num_begin, windows[0].isolation_width),
+        (125, 25.0)
+    );
+    assert_eq!(
+        reader.dia_frame_msms_window_groups().unwrap(),
+        [DiaFrameMsMsWindowGroup { id: 1 }]
+    );
+    // SQLite integers in REAL coefficient columns are numbers.
+    let tims = reader.tims_calibrations().unwrap();
+    assert_eq!((tims[0].model_type, tims[0].coefficients[1]), (2, 935.0));
+    assert_eq!(
+        reader.mz_calibrations().unwrap()[0].digitizer_timebase,
+        0.125
+    );
+    assert!(reader.mz_model(42).unwrap().mz(100_000.0).unwrap() > 0.0);
+
+    // A missing optional table has no rows.
+    let synthetic = TdfReader::open(fixture()).unwrap();
+    assert!(synthetic.pasef_frame_msms_info().unwrap().is_empty());
+    assert!(synthetic.dia_frame_msms_windows().unwrap().is_empty());
+    assert_eq!(synthetic.acquisition_type(), AcquisitionType::DiaPasef);
+}
+
+#[test]
+fn raw_tables_keep_blobs_as_bytes_and_infinite_reals() {
+    let reader = TdfReader::open(fixture().parent().unwrap().join("tables.d")).unwrap();
+    let blobs = reader.metadata().table("Blobs").unwrap();
+    assert_eq!(blobs[0].get("Data").unwrap().as_blob().unwrap().len(), 8192);
+    let frames = reader.metadata().table("Frames").unwrap();
+    assert_eq!(
+        frames[1].get("Pressure"),
+        Some(&SqlValue::Real(f64::INFINITY))
+    );
+}
+
+#[test]
+fn linear_scales_reproduce_timsrust_converters() {
+    let reader = TdfReader::open(fixture().parent().unwrap().join("tables.d")).unwrap();
+    // otofControl widens the m/z range by 5 on each side.
+    let mz = reader.linear_mz_scale().unwrap();
+    assert!((mz.mz(0.0) - 95.0).abs() < 1e-9);
+    assert!((mz.mz(397_888.0) - 1705.0).abs() < 1e-9);
+    // Upper bound at scan 0, lower bound at the last scan (NumScans - 1).
+    let mobility = reader.linear_mobility_scale().unwrap();
+    assert_eq!(mobility.one_over_k0(0.0), 1.6);
+    assert!((mobility.one_over_k0(2.0) - 0.6).abs() < 1e-12);
+    assert!((mobility.scan_number(1.1) - 1.0).abs() < 1e-12);
 }

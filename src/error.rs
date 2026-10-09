@@ -52,8 +52,6 @@ pub enum Error {
     #[error("database: {0}")]
     DatabaseSource(#[source] Box<turso_core::LimboError>),
     #[error(transparent)]
-    Metadata(#[from] serde_json::Error),
-    #[error(transparent)]
     ParseInteger(#[from] std::num::ParseIntError),
     #[error("invalid TDF data: {0}")]
     Invalid(String),
@@ -114,11 +112,9 @@ impl Error {
                 ErrorKind::ResourceLimit
             }
             Self::Database(_) | Self::DatabaseSource(_) => ErrorKind::Database,
-            Self::Metadata(_)
-            | Self::ParseInteger(_)
-            | Self::Invalid(_)
-            | Self::Lzf(_)
-            | Self::Decoder { .. } => ErrorKind::CorruptData,
+            Self::ParseInteger(_) | Self::Invalid(_) | Self::Lzf(_) | Self::Decoder { .. } => {
+                ErrorKind::CorruptData
+            }
             Self::Unsupported(_) => ErrorKind::Unsupported,
             Self::ResourceLimit { .. } => ErrorKind::ResourceLimit,
             Self::Context { .. } => unreachable!("root_error removes contextual wrappers"),

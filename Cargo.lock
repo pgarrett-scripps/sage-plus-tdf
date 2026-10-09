@@ -1538,7 +1538,6 @@ version = "0.1.1-rc.2"
 dependencies = [
  "lzf",
  "ruzstd",
- "serde",
  "serde_json",
  "sha2",
  "tempfile",

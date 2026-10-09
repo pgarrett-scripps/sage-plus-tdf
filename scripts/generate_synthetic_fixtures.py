@@ -56,6 +56,50 @@ def database(path, compression, rows):
     connection.close()
 
 
+def tables(directory, binary):
+    """Bruker-schema metadata for the typed tables, over the synthetic frames."""
+    directory.mkdir()
+    shutil.copy(binary, directory / "analysis.tdf_bin")
+    connection = sqlite3.connect(directory / "analysis.tdf")
+    statements = [
+        "CREATE TABLE GlobalMetadata (Key TEXT PRIMARY KEY, Value TEXT)",
+        "CREATE TABLE Frames (Id INTEGER PRIMARY KEY, Time REAL NOT NULL, Polarity CHAR(1) NOT NULL, ScanMode INTEGER NOT NULL, MsMsType INTEGER NOT NULL, TimsId INTEGER, MaxIntensity INTEGER NOT NULL, SummedIntensities INTEGER NOT NULL, NumScans INTEGER NOT NULL, NumPeaks INTEGER NOT NULL, MzCalibration INTEGER NOT NULL, T1 REAL NOT NULL, T2 REAL NOT NULL, TimsCalibration INTEGER NOT NULL, PropertyGroup INTEGER, AccumulationTime REAL NOT NULL, RampTime REAL NOT NULL, Pressure REAL)",
+        "INSERT INTO Frames VALUES (10, 0.668585, '+', 8, 0, 0, 30, 60, 3, 3, 1, 25.4744657311153, 23.220480964598842, 1, 1, 100.045, 100.045, 2.336)",
+        "INSERT INTO Frames VALUES (42, 0.787, '+', 8, 8, 33, 30, 60, 3, 3, 1, 25.4744657311153, 23.220480964598842, 1, 1, 50.0, 100.045, 9e999)",
+        "CREATE TABLE MzCalibration (Id INTEGER PRIMARY KEY, ModelType INTEGER NOT NULL, DigitizerTimebase REAL NOT NULL, DigitizerDelay REAL NOT NULL, T1 REAL NOT NULL, T2 REAL NOT NULL, dC1 REAL NOT NULL, dC2 REAL NOT NULL, C0, C1, C2, C3, C4)",
+        "INSERT INTO MzCalibration VALUES (1, 1, 0.125, 25835.25, 25.45627710651325, 23.13094591846571, 20.0, 0.0, 280.06963870190276, 153122.31936770084, 0, 0, 0)",
+        "CREATE TABLE TimsCalibration (Id INTEGER PRIMARY KEY, ModelType INTEGER NOT NULL, C0, C1, C2, C3, C4, C5, C6, C7, C8, C9)",
+        "INSERT INTO TimsCalibration VALUES (1, 2, 1, 935, 239.34640606518187, 102.96946384662338, 33.64485981308411, 1, -0.026580764926972034, 171.42849749723894, 16.838457909616054, 1732.6649859338625)",
+        "CREATE TABLE Precursors (Id INTEGER PRIMARY KEY, LargestPeakMz REAL NOT NULL, AverageMz REAL NOT NULL, MonoisotopicMz REAL, Charge INTEGER, ScanNumber REAL NOT NULL, Intensity REAL NOT NULL, Parent INTEGER)",
+        "INSERT INTO Precursors VALUES (1, 1488.420559903908, 1488.7961427589423, 1487.919127176326, 2, 275.5991596638655, 1341.0, 10)",
+        "INSERT INTO Precursors VALUES (2, 600.5, 600.75, NULL, NULL, 120.25, 88.0, 10)",
+        "CREATE TABLE PasefFrameMsMsInfo (Frame INTEGER NOT NULL, ScanNumBegin INTEGER NOT NULL, ScanNumEnd INTEGER NOT NULL, IsolationMz REAL NOT NULL, IsolationWidth REAL NOT NULL, CollisionEnergy REAL NOT NULL, Precursor INTEGER, PRIMARY KEY(Frame, ScanNumBegin))",
+        "INSERT INTO PasefFrameMsMsInfo VALUES (42, 263, 288, 1488.7961427589423, 3.0, 44.79260595130748, 1)",
+        "CREATE TABLE DiaFrameMsMsWindowGroups (Id INTEGER PRIMARY KEY)",
+        "INSERT INTO DiaFrameMsMsWindowGroups VALUES (1)",
+        "CREATE TABLE DiaFrameMsMsWindows (WindowGroup INTEGER NOT NULL, ScanNumBegin INTEGER NOT NULL, ScanNumEnd INTEGER NOT NULL, IsolationMz REAL NOT NULL, IsolationWidth REAL NOT NULL, CollisionEnergy REAL NOT NULL)",
+        "INSERT INTO DiaFrameMsMsWindows VALUES (1, 125, 530, 812.5, 25.0, 45.08333333333333)",
+        "CREATE TABLE DiaFrameMsMsInfo (Frame INTEGER PRIMARY KEY, WindowGroup INTEGER NOT NULL)",
+        "INSERT INTO DiaFrameMsMsInfo VALUES (42, 1)",
+        "CREATE TABLE Blobs (Id INTEGER, Data BLOB)",
+        "INSERT INTO Blobs VALUES (1, randomblob(8192))",
+    ]
+    for statement in statements:
+        connection.execute(statement)
+    metadata = {
+        "TimsCompressionType": "2",
+        "AcquisitionSoftware": "Bruker otofControl",
+        "MzAcqRangeLower": "100.000000",
+        "MzAcqRangeUpper": "1700.000000",
+        "OneOverK0AcqRangeLower": "0.6",
+        "OneOverK0AcqRangeUpper": "1.6",
+        "DigitizerNumSamples": "397888",
+    }
+    connection.executemany("INSERT INTO GlobalMetadata VALUES (?, ?)", metadata.items())
+    connection.commit()
+    connection.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path)
@@ -96,6 +140,7 @@ def main():
     connection.execute("INSERT INTO MzCalibration SELECT * FROM MzCalibration")
     connection.commit()
     connection.close()
+    tables(root / "tables.d", root / "synthetic.d/analysis.tdf_bin")
     (root / "checksum.zstd").write_bytes(zstandard(shuffled, checksum=True))
     print(f"Generated synthetic fixtures in {root}")
 
