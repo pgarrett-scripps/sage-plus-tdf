@@ -1,6 +1,6 @@
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
-use timsrust_reader::{Limits, MetadataDatabase, MobilityModel, TdfReader};
+use timsrust_reader::{Limits, MetadataDatabase, MobilityModel, MzCalibration, MzModel, TdfReader};
 
 fn fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/synthetic.d")
@@ -169,21 +169,91 @@ fn source_mass_model_uses_temperature_and_canonical_column_names() {
     assert_eq!(reader.frames().next().unwrap().scan_count, 3);
     assert!(reader.metadata().table("Frames").unwrap()[0].contains_key("numscans"));
     let model = reader.mz_model(10).unwrap();
-    assert!((model.mz(100_000).unwrap() - 317.80525993456973).abs() < 1e-9);
+    assert!((model.mz(100_000.0).unwrap() - 317.80525993456973).abs() < 1e-9);
     assert!(reader.mz_model(999).is_err());
-    let mut row = reader.metadata().table("MzCalibration").unwrap().remove(0);
-    let warmer = timsrust_reader::MzModel::from_metadata(&row, 26.0).unwrap();
-    assert!(warmer.mz(100_000).unwrap() < model.mz(100_000).unwrap());
-    row.insert("dC2".into(), 1.into());
-    assert_eq!(
-        timsrust_reader::MzModel::from_metadata(&row, 26.0)
-            .unwrap_err()
-            .kind(),
-        timsrust_reader::ErrorKind::Unsupported
-    );
-    row.insert("dC2".into(), 0.into());
-    row.insert("C1".into(), (-1).into());
-    assert!(timsrust_reader::MzModel::from_metadata(&row, 26.0).is_err());
+    let calibration = mz_calibration(&serde_json::json!({
+        "ModelType": 1, "DigitizerTimebase": 0.2, "DigitizerDelay": 25870.0,
+        "T1": 25.62513732863827, "T2": 25.019305770074833, "dC1": 20.0, "dC2": 0.0,
+        "C0": 317.86417140238336, "C1": 153159.143753129, "C2": 0.0, "C3": 0.0, "C4": 0.0
+    }));
+    let same = MzModel::new(&calibration, 25.548975152547968, 0.0).unwrap();
+    assert_eq!(same.mz(100_000.0).unwrap(), model.mz(100_000.0).unwrap());
+    let warmer = MzModel::new(&calibration, 26.0, 0.0).unwrap();
+    assert!(warmer.mz(100_000.0).unwrap() < model.mz(100_000.0).unwrap());
+}
+
+fn mz_calibration(value: &serde_json::Value) -> MzCalibration {
+    let n = |key: &str| value[key].as_f64().unwrap();
+    MzCalibration {
+        id: 1,
+        model_type: value["ModelType"].as_i64().unwrap(),
+        digitizer_timebase: n("DigitizerTimebase"),
+        digitizer_delay: n("DigitizerDelay"),
+        t1: n("T1"),
+        t2: n("T2"),
+        dc1: n("dC1"),
+        dc2: n("dC2"),
+        c0: n("C0"),
+        c1: n("C1"),
+        c2: n("C2"),
+        c3: n("C3"),
+        c4: n("C4"),
+    }
+}
+
+#[test]
+fn full_mass_model_matches_bruker_sdk_within_a_tenth_of_a_ppm() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/mz_calibration_sdk.json")).unwrap();
+    let mut worst = 0.0f64;
+    for case in fixture["mz_cases"].as_array().unwrap() {
+        let model = MzModel::new(
+            &mz_calibration(&case["calibration"]),
+            case["frame_t1"].as_f64().unwrap(),
+            case["frame_t2"].as_f64().unwrap(),
+        )
+        .unwrap();
+        let tofs = case["tof"].as_array().unwrap();
+        for (tof, expected) in tofs.iter().zip(case["mz"].as_array().unwrap()) {
+            let expected = expected.as_f64().unwrap();
+            let actual = model.mz(tof.as_f64().unwrap()).unwrap();
+            let ppm = (actual - expected).abs() / expected * 1e6;
+            assert!(ppm < 0.1, "{}: {ppm} ppm at TOF {tof}", case["name"]);
+            worst = worst.max(ppm);
+        }
+        let mzs = case["inverse_mz"].as_array().unwrap();
+        for (mz, expected) in mzs.iter().zip(case["inverse_tof"].as_array().unwrap()) {
+            let actual = model.tof_index(mz.as_f64().unwrap()).unwrap();
+            let expected = expected.as_f64().unwrap();
+            assert!(
+                (actual - expected).abs() < 1e-3,
+                "{}: TOF {actual} vs {expected}",
+                case["name"]
+            );
+        }
+    }
+    assert!(worst < 1e-3, "worst {worst} ppm");
+}
+
+#[test]
+fn inverse_mobility_matches_bruker_sdk() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/mz_calibration_sdk.json")).unwrap();
+    for case in fixture["mobility_inverse_cases"].as_array().unwrap() {
+        let c: [f64; 10] = serde_json::from_value(case["coefficients"].clone()).unwrap();
+        let model = MobilityModel::new(c).unwrap();
+        let values = case["one_over_k0"].as_array().unwrap();
+        for (value, expected) in values.iter().zip(case["scans"].as_array().unwrap()) {
+            let value = value.as_f64().unwrap();
+            let scan = model.scan_number(value).unwrap();
+            assert!(
+                (scan - expected.as_f64().unwrap()).abs() < 1e-6,
+                "{}",
+                case["name"]
+            );
+            assert!((model.one_over_k0(scan).unwrap() - value).abs() < 1e-12);
+        }
+    }
 }
 
 #[test]
@@ -217,7 +287,7 @@ fn calibration_tables_with_equal_ids_keep_independent_cached_models() {
         assert_eq!(frame.mobility_calibration_id, frame.mz_calibration_id);
     }
     for id in [42, 10, 42] {
-        let mz = reader.mz_model(id).unwrap().mz(100_000).unwrap();
+        let mz = reader.mz_model(id).unwrap().mz(100_000.0).unwrap();
         let mobility = reader
             .mobility_model(id)
             .unwrap()

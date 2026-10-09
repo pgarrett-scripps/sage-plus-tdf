@@ -26,7 +26,7 @@
 //! ```no_run
 //! # use timsrust_reader::{Result, TdfReader};
 //! # fn calibrated(reader: &TdfReader, id: u64) -> Result<()> {
-//! let mz = reader.mz_model(id)?.mz(100_000)?;
+//! let mz = reader.mz_model(id)?.mz(100_000.0)?;
 //! let mobility = reader.mobility_model(id)?.one_over_k0(100.0)?;
 //! println!("m/z {mz}, inverse reduced mobility {mobility}");
 //! # Ok(())
@@ -44,8 +44,8 @@ mod schema;
 pub use database::{MetadataDatabase, MetadataLimits, MetadataRow};
 pub use error::{Error, ErrorContext, ErrorKind};
 pub(crate) use error::{field, invalid, limit};
-pub use mass::MzModel;
-pub use mobility::MobilityModel;
+pub use mass::{LinearMzScale, MzCalibration, MzModel};
+pub use mobility::{LinearMobilityScale, MobilityModel};
 pub use reader::TdfReader;
 use serde::Deserialize;
 
@@ -92,7 +92,9 @@ pub struct FrameInfo {
     #[serde(rename = "MzCalibration", default)]
     pub mz_calibration_id: Option<u64>,
     #[serde(rename = "T1", default)]
-    pub temperature: Option<f64>,
+    pub t1: Option<f64>,
+    #[serde(rename = "T2", default)]
+    pub t2: Option<f64>,
     #[serde(rename = "Polarity", default)]
     pub polarity: Option<String>,
     #[serde(rename = "AccumulationTime", default)]

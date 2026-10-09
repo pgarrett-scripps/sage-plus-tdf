@@ -1,7 +1,7 @@
 //! TDF schema interpretation, separate from generic SQLite access and binary I/O.
 use crate::{
     Error, ErrorContext, FrameInfo, Limits, MetadataDatabase, MetadataLimits, MetadataRow,
-    MobilityModel, MzModel, Result, field, invalid, limit,
+    MobilityModel, MzCalibration, MzModel, Result, field, invalid, limit,
 };
 use std::{cell::OnceCell, collections::BTreeMap, path::Path};
 
@@ -150,8 +150,8 @@ impl TdfMetadata {
                 "MzCalibration",
             )
         })?;
-        let temperature = frame
-            .temperature
+        let t1 = frame
+            .t1
             .ok_or_else(|| field(invalid("missing frame temperature"), "Frames", "T1"))?;
         let row = self.mz_rows.get(&self.database)?.get(&id).ok_or_else(|| {
             field(
@@ -160,8 +160,46 @@ impl TdfMetadata {
                 "Id",
             )
         })?;
-        MzModel::from_metadata(row, temperature)
+        let calibration = mz_calibration(row)?;
+        // Without a frame T2 the dC2 term is only known when it vanishes.
+        let t2 = frame
+            .t2
+            .or((calibration.dc2 == 0.0).then_some(calibration.t2))
+            .ok_or_else(|| field(invalid("missing frame temperature"), "Frames", "T2"))?;
+        MzModel::new(&calibration, t1, t2)
     }
+}
+
+pub(super) fn mz_calibration(row: &MetadataRow) -> Result<MzCalibration> {
+    let number = |key: &str| {
+        row.get(key)
+            .and_then(|v| v.as_f64())
+            .ok_or_else(|| field(invalid("missing m/z coefficient"), "MzCalibration", key))
+    };
+    Ok(MzCalibration {
+        id: row.get("Id").and_then(|v| v.as_u64()).ok_or_else(|| {
+            field(
+                invalid("invalid calibration identifier"),
+                "MzCalibration",
+                "Id",
+            )
+        })?,
+        model_type: row
+            .get("ModelType")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| field(invalid("invalid model type"), "MzCalibration", "ModelType"))?,
+        digitizer_timebase: number("DigitizerTimebase")?,
+        digitizer_delay: number("DigitizerDelay")?,
+        t1: number("T1")?,
+        t2: number("T2")?,
+        dc1: number("dC1")?,
+        dc2: number("dC2")?,
+        c0: number("C0")?,
+        c1: number("C1")?,
+        c2: number("C2")?,
+        c3: number("C3")?,
+        c4: number("C4")?,
+    })
 }
 
 pub(super) fn parse_frame(row: &MetadataRow) -> Result<FrameInfo> {
@@ -187,7 +225,8 @@ pub(super) fn parse_frame(row: &MetadataRow) -> Result<FrameInfo> {
         binary_offset: required(row, "TimsId")?,
         mobility_calibration_id: optional(row, "TimsCalibration")?,
         mz_calibration_id: optional(row, "MzCalibration")?,
-        temperature: optional(row, "T1")?,
+        t1: optional(row, "T1")?,
+        t2: optional(row, "T2")?,
         polarity: optional(row, "Polarity")?,
         accumulation_time_ms: optional(row, "AccumulationTime")?,
     })

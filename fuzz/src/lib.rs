@@ -4,7 +4,7 @@
 // The shipped crate exposes no decoder entry point for unvalidated buffers.
 pub use timsrust_reader::{
     Error, ErrorContext, Frame, FrameInfo, Limits, MetadataDatabase, MetadataLimits, MetadataRow,
-    MobilityModel, MzModel, Result,
+    MobilityModel, MzCalibration, MzModel, Result,
 };
 
 fn invalid(message: impl Into<String>) -> Error {
@@ -62,9 +62,13 @@ pub fn schema_calibration(data: &[u8]) {
         if let Ok(frame) = schema::parse_frame(&row) {
             let _ = schema::validate_frame(&frame, Limits::default(), 1_000_000);
         }
-        if let Ok(model) = MzModel::from_metadata(&row, 25.0) {
-            for tof in [0, 100_000, u32::MAX] {
-                let _ = model.mz(tof);
+        if let Ok(calibration) = schema::mz_calibration(&row)
+            && let Ok(model) = MzModel::new(&calibration, 25.0, 26.0)
+        {
+            for tof in [0.0, 100_000.0, f64::from(u32::MAX)] {
+                if let Ok(mz) = model.mz(tof) {
+                    let _ = model.tof_index(mz);
+                }
             }
         }
     }
