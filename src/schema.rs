@@ -3,7 +3,7 @@ use crate::{
     Error, ErrorContext, FrameInfo, Limits, MetadataDatabase, MetadataLimits, MetadataRow,
     MobilityModel, MzCalibration, MzModel, Result, field, invalid, limit,
 };
-use std::{cell::OnceCell, collections::BTreeMap, path::Path};
+use std::{collections::BTreeMap, path::Path, sync::OnceLock};
 
 pub(crate) struct TdfMetadata {
     pub(crate) database: MetadataDatabase,
@@ -274,13 +274,13 @@ pub(super) fn validate_frame(frame: &FrameInfo, limits: Limits, binary_length: u
 // A table and its lazy rows share one owner so callers cannot mix calibration caches.
 struct CalibrationRows {
     table: &'static str,
-    rows: OnceCell<BTreeMap<u64, MetadataRow>>,
+    rows: OnceLock<BTreeMap<u64, MetadataRow>>,
 }
 impl CalibrationRows {
     fn new(table: &'static str) -> Self {
         Self {
             table,
-            rows: OnceCell::new(),
+            rows: OnceLock::new(),
         }
     }
 

@@ -16,7 +16,7 @@ fn reads_views_case_variants_sparse_ids_and_raw_ions_without_writes() {
         std::fs::copy(fixture().join(name), dir.path().join(name)).unwrap();
     }
     let before = digest(&dir.path().join("analysis.tdf"));
-    let mut reader = TdfReader::open(dir.path().join("analysis.tdf_bin")).unwrap();
+    let reader = TdfReader::open(dir.path().join("analysis.tdf_bin")).unwrap();
     assert_eq!(reader.frames().map(|f| f.id).collect::<Vec<_>>(), [10, 42]);
     for id in [10, 42] {
         let frame = reader.read_frame(id).unwrap();
@@ -43,6 +43,26 @@ fn reads_views_case_variants_sparse_ids_and_raw_ions_without_writes() {
 }
 
 #[test]
+fn frames_read_concurrently_from_a_shared_reader() {
+    let reader = TdfReader::open(fixture()).unwrap();
+    let expected = reader.read_frame(10).unwrap();
+    std::thread::scope(|scope| {
+        for _ in 0..8 {
+            scope.spawn(|| {
+                for _ in 0..50 {
+                    for id in [10, 42] {
+                        let frame = reader.read_frame(id).unwrap();
+                        assert_eq!(frame.tof_indices, expected.tof_indices);
+                        assert_eq!(frame.intensities, expected.intensities);
+                    }
+                    assert!(reader.mobility_model(42).is_ok());
+                }
+            });
+        }
+    });
+}
+
+#[test]
 fn missing_database_is_not_created_and_limits_are_enforced() {
     let dir = tempfile::tempdir().unwrap();
     assert!(MetadataDatabase::open(dir.path().join("missing.db")).is_err());
@@ -57,7 +77,7 @@ fn missing_database_is_not_created_and_limits_are_enforced() {
         )
         .is_err()
     );
-    let mut reader = TdfReader::with_limits(
+    let reader = TdfReader::with_limits(
         fixture(),
         Limits {
             max_decompressed_bytes: 4,
@@ -83,7 +103,7 @@ fn active_journal_is_rejected() {
 #[test]
 fn lzf_frames_retain_empty_scans_and_reject_corrupt_offsets() {
     let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/lzf.d");
-    let mut reader = TdfReader::open(&source).unwrap();
+    let reader = TdfReader::open(&source).unwrap();
     let frame = reader.read_frame(10).unwrap();
     assert_eq!(frame.scan_offsets, [0, 2, 2]);
     assert_eq!(frame.tof_indices, [4, 5]);
@@ -300,7 +320,7 @@ fn calibration_tables_with_equal_ids_keep_independent_cached_models() {
 
 #[test]
 fn malformed_calibration_stays_lazy_and_never_leaves_a_partial_cache() {
-    let mut reader =
+    let reader =
         TdfReader::open(fixture().parent().unwrap().join("duplicate-calibration.d")).unwrap();
     for _ in 0..3 {
         assert_eq!(reader.read_frame(10).unwrap().tof_indices, [0, 5, 8]);
@@ -347,7 +367,7 @@ fn contextual_errors_distinguish_limits_from_corruption_and_keep_sources() {
     for name in ["analysis.tdf", "analysis.tdf_bin"] {
         std::fs::copy(fixture().join(name), dir.path().join(name)).unwrap();
     }
-    let mut reader = TdfReader::open(dir.path()).unwrap();
+    let reader = TdfReader::open(dir.path()).unwrap();
     std::fs::write(dir.path().join("analysis.tdf_bin"), []).unwrap();
     let error = reader.read_frame(10).unwrap_err();
     assert_eq!(error.kind(), ErrorKind::CorruptData);

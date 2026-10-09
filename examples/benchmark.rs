@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut random_peak_count = None;
     for _ in 0..repeats {
         let started = Instant::now();
-        let mut reader = TdfReader::open(&path)?;
+        let reader = TdfReader::open(&path)?;
         opening_ns.push(started.elapsed().as_nanos());
         let ids: Vec<_> = reader.frames().map(|frame| frame.id).collect();
         frame_count = ids.len();

@@ -7,7 +7,7 @@
 //! use timsrust_reader::{Result, TdfReader};
 //!
 //! fn inspect(path: &str) -> Result<()> {
-//!     let mut reader = TdfReader::open(path)?;
+//!     let reader = TdfReader::open(path)?;
 //!     let ids: Vec<_> = reader.frames().map(|frame| frame.id).collect();
 //!     for id in ids {
 //!         let frame = reader.read_frame(id)?;

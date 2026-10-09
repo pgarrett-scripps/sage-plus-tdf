@@ -5,7 +5,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args()
         .nth(1)
         .ok_or("usage: inspect acquisition.d")?;
-    let mut reader = TdfReader::open(path)?;
+    let reader = TdfReader::open(path)?;
     let ids: Vec<_> = reader.frames().map(|f| f.id).collect();
     let mut peaks = 0u64;
     let mut hash = Sha256::new();

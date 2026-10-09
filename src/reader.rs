@@ -6,14 +6,17 @@ use crate::{
 use std::{
     collections::BTreeMap,
     fs::File,
-    io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
 };
 
+/// An open acquisition. All methods take `&self`, and frames can be read from
+/// many threads at once: the binary file is read with positional reads, never
+/// a shared cursor.
 pub struct TdfReader {
     directory: PathBuf,
     metadata: TdfMetadata,
     binary: File,
+    binary_length: u64,
     frames: BTreeMap<u64, FrameInfo>,
     compression: u32,
     limits: Limits,
@@ -52,6 +55,7 @@ impl TdfReader {
             directory,
             metadata,
             binary,
+            binary_length,
             frames,
             compression,
             limits,
@@ -69,7 +73,7 @@ impl TdfReader {
         self.frames.values()
     }
 
-    pub fn read_frame(&mut self, id: u64) -> Result<Frame> {
+    pub fn read_frame(&self, id: u64) -> Result<Frame> {
         let offset = self.frames.get(&id).map(|frame| frame.binary_offset);
         self.read_frame_inner(id).map_err(|error| {
             error.with_context(ErrorContext {
@@ -81,17 +85,15 @@ impl TdfReader {
         })
     }
 
-    fn read_frame_inner(&mut self, id: u64) -> Result<Frame> {
+    fn read_frame_inner(&self, id: u64) -> Result<Frame> {
         let info = self
             .frames
             .get(&id)
             .ok_or_else(|| invalid(format!("unknown frame {id}")))?;
-        self.binary.seek(SeekFrom::Start(info.binary_offset))?;
         let mut header = [0u8; 8];
-        self.binary.read_exact(&mut header)?;
+        read_exact_at(&self.binary, &mut header, info.binary_offset)?;
         let bytes = compression::word(&header, 0)? as usize;
         let scans = compression::word(&header, 4)? as usize;
-        let binary_length = self.binary.metadata()?.len();
         if bytes > self.limits.max_compressed_bytes {
             return Err(limit(
                 "compressed_bytes",
@@ -123,7 +125,7 @@ impl TdfReader {
         if info
             .binary_offset
             .checked_add(bytes as u64)
-            .is_none_or(|end| end > binary_length)
+            .is_none_or(|end| end > self.binary_length)
         {
             return Err(header_field(
                 invalid("frame extent is outside binary file"),
@@ -131,7 +133,7 @@ impl TdfReader {
             ));
         }
         let mut data = vec![0u8; bytes - 8];
-        self.binary.read_exact(&mut data)?;
+        read_exact_at(&self.binary, &mut data, info.binary_offset + 8)?;
         let frame = compression::decode(
             self.compression,
             id,
@@ -178,3 +180,30 @@ impl TdfReader {
         })
     }
 }
+
+#[cfg(unix)]
+fn read_exact_at(file: &File, buffer: &mut [u8], offset: u64) -> std::io::Result<()> {
+    std::os::unix::fs::FileExt::read_exact_at(file, buffer, offset)
+}
+
+#[cfg(windows)]
+fn read_exact_at(file: &File, mut buffer: &mut [u8], mut offset: u64) -> std::io::Result<()> {
+    use std::os::windows::fs::FileExt;
+    while !buffer.is_empty() {
+        match file.seek_read(buffer, offset) {
+            Ok(0) => return Err(std::io::ErrorKind::UnexpectedEof.into()),
+            Ok(n) => {
+                buffer = &mut buffer[n..];
+                offset += n as u64;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+const _: () = {
+    const fn shareable<T: Send + Sync>() {}
+    shareable::<TdfReader>();
+};
