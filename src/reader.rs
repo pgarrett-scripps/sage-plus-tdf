@@ -25,6 +25,8 @@ pub struct TdfReader {
     limits: Limits,
 }
 impl TdfReader {
+    /// Open the `.d` acquisition directory itself. A file inside it, or any
+    /// other path, is rejected rather than resolved to a parent directory.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         Self::with_limits(path, Limits::default())
     }
@@ -40,15 +42,13 @@ impl TdfReader {
     }
 
     fn open_inner(path: &Path, limits: Limits) -> Result<Self> {
-        let directory = path
-            .ancestors()
-            .find(|p| p.join("analysis.tdf").is_file() && p.join("analysis.tdf_bin").is_file())
-            .ok_or_else(|| {
-                Error::Unsupported(
-                    "expected a local TDF directory with analysis.tdf and analysis.tdf_bin".into(),
-                )
-            })?
-            .to_path_buf();
+        // The acquisition directory itself; parents are never searched.
+        if !path.join("analysis.tdf").is_file() || !path.join("analysis.tdf_bin").is_file() {
+            return Err(Error::Unsupported(
+                "expected a local .d directory containing analysis.tdf and analysis.tdf_bin".into(),
+            ));
+        }
+        let directory = path.to_path_buf();
         let metadata = TdfMetadata::open(directory.join("analysis.tdf"), limits.metadata)?;
         let global = metadata.global_metadata()?;
         let compression = global.compression_type()?;

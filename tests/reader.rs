@@ -18,7 +18,7 @@ fn reads_views_case_variants_sparse_ids_and_raw_ions_without_writes() {
         std::fs::copy(fixture().join(name), dir.path().join(name)).unwrap();
     }
     let before = digest(&dir.path().join("analysis.tdf"));
-    let reader = TdfReader::open(dir.path().join("analysis.tdf_bin")).unwrap();
+    let reader = TdfReader::open(dir.path()).unwrap();
     assert_eq!(reader.frames().map(|f| f.id).collect::<Vec<_>>(), [10, 42]);
     for id in [10, 42] {
         let frame = reader.read_frame(id).unwrap();
@@ -88,6 +88,20 @@ fn missing_database_is_not_created_and_limits_are_enforced() {
     )
     .unwrap();
     assert!(reader.read_frame(10).is_err());
+}
+
+#[test]
+fn open_requires_the_acquisition_directory_itself() {
+    use timsrust_reader::ErrorKind;
+    for path in [
+        fixture().join("analysis.tdf_bin"),
+        fixture().join("analysis.tdf"),
+        fixture().join("missing/child"),
+        fixture().parent().unwrap().to_path_buf(),
+    ] {
+        let error = TdfReader::open(&path).err().unwrap();
+        assert_eq!(error.kind(), ErrorKind::Unsupported, "{}", path.display());
+    }
 }
 
 #[test]
