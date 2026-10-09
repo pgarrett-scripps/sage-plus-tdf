@@ -1,8 +1,8 @@
-use sha2::{Digest, Sha256};
-use std::path::PathBuf;
-use timsrust_reader::{
+use sage_plus_tdf::{
     Limits, MetadataDatabase, MobilityModel, MzCalibration, MzModel, SqlValue, TdfReader,
 };
+use sha2::{Digest, Sha256};
+use std::path::PathBuf;
 
 fn fixture() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/synthetic.d")
@@ -92,7 +92,7 @@ fn missing_database_is_not_created_and_limits_are_enforced() {
 
 #[test]
 fn open_requires_the_acquisition_directory_itself() {
-    use timsrust_reader::ErrorKind;
+    use sage_plus_tdf::ErrorKind;
     for path in [
         fixture().join("analysis.tdf_bin"),
         fixture().join("analysis.tdf"),
@@ -158,7 +158,7 @@ fn mobility_matches_sage_plus_sdk_reference_including_boundaries() {
 
 #[test]
 fn metadata_limits_stop_large_values_rows_and_recursive_queries() {
-    use timsrust_reader::MetadataLimits;
+    use sage_plus_tdf::MetadataLimits;
     let path = fixture().parent().unwrap().join("metadata.d/analysis.tdf");
     let db = MetadataDatabase::with_limits(
         &path,
@@ -296,7 +296,7 @@ fn inverse_mobility_matches_bruker_sdk() {
 fn concurrent_metadata_queries_keep_independent_budgets() {
     let db = MetadataDatabase::with_limits(
         fixture().parent().unwrap().join("metadata.d/analysis.tdf"),
-        timsrust_reader::MetadataLimits {
+        sage_plus_tdf::MetadataLimits {
             max_vm_operations: 10_000,
             ..Default::default()
         },
@@ -351,7 +351,7 @@ fn malformed_calibration_stays_lazy_and_never_leaves_a_partial_cache() {
 
 #[test]
 fn contextual_errors_distinguish_limits_from_corruption_and_keep_sources() {
-    use timsrust_reader::{Error, ErrorKind};
+    use sage_plus_tdf::{Error, ErrorKind};
     let error = match TdfReader::with_limits(
         fixture(),
         Limits {
@@ -406,7 +406,7 @@ fn contextual_errors_distinguish_limits_from_corruption_and_keep_sources() {
 
 #[test]
 fn metadata_limits_and_invalid_database_have_actionable_locations() {
-    use timsrust_reader::{Error, ErrorKind, MetadataLimits};
+    use sage_plus_tdf::{Error, ErrorKind, MetadataLimits};
     let path = fixture().parent().unwrap().join("metadata.d/analysis.tdf");
     let db = MetadataDatabase::with_limits(
         &path,
@@ -462,7 +462,7 @@ fn metadata_limits_and_invalid_database_have_actionable_locations() {
 
 #[test]
 fn typed_tables_follow_the_bruker_schema() {
-    use timsrust_reader::{AcquisitionType, DiaFrameMsMsInfo, DiaFrameMsMsWindowGroup};
+    use sage_plus_tdf::{AcquisitionType, DiaFrameMsMsInfo, DiaFrameMsMsWindowGroup};
     let path = fixture().parent().unwrap().join("tables.d");
     let reader = TdfReader::open(&path).unwrap();
     let frame = reader.frame(10).unwrap();

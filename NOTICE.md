@@ -10,7 +10,7 @@ Synthetic SQLite and compressed frame fixtures were generated locally for these 
 
 The original repository license notice and upstream package license declaration are both retained. Dependencies keep their own licenses.
 
-The restricted ModelType 1 mass equations are adapted from MSConvert RS source calibration, which documents the timsrust-calibration 0.1.1 equations. Per-frame temperatures and unsupported higher-order terms are handled explicitly.
+The ModelType 1 mass equations were first adapted from MSConvert RS source calibration, which documents the timsrust-calibration 0.1.1 equations. The full model, including the `dC2` and `T2` drift and the `C2`, `C3` and `C4` terms, is checked against Bruker `tims_index_to_mz` and `tims_mz_to_index` outputs recorded in `tests/fixtures/mz_calibration_sdk.json`. That fixture holds only calibration coefficients, temperatures, coordinates and SDK outputs for the tdfpy v2.2.0 public test acquisitions described below. No Bruker SDK code or binaries are included.
 
 
 ## Source revisions and license interpretation
@@ -21,7 +21,7 @@ The Sage Plus source was inspected at revision `d7ab67d80ea01304f644b9e9335acd8d
 
 The MSConvert RS source calibration adapter was inspected at `e6b9936d6137dd66b404e73430298406b95d45a5`, whose repository license is Apache-2.0. Its documented equation source is `timsrust-calibration` 0.1.1, whose manifest and bundled license both declare Apache-2.0. The applicable text is included as `LICENSE-APACHE`.
 
-This derivative replaces upstream workspace and spectrum-processing APIs with read-only frame parsing, adds bounded decoding and metadata execution, and adds explicit restricted source-calibration models. These modifications do not remove the notices of the retained source material.
+This derivative replaces upstream workspace and spectrum-processing APIs with read-only frame parsing, adds bounded decoding and metadata execution, and adds explicit source-calibration models and typed metadata tables. The package is renamed `sage-plus-tdf`. These modifications do not remove the notices of the retained source material.
 
 
 ## Calibration fixture provenance

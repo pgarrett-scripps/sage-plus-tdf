@@ -1,6 +1,6 @@
 //! Print a digest of every raw frame plus typed-table counts as JSON.
+use sage_plus_tdf::TdfReader;
 use sha2::{Digest, Sha256};
-use timsrust_reader::TdfReader;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::args()

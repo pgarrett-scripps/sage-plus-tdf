@@ -1,8 +1,8 @@
 # Security
 
-The private 0.1 series and unpublished `0.1.1-rc.2` candidate receive fixes on `main`. This project has no guaranteed response time or long-term support commitment.
+The unpublished 0.2 series receives fixes on `main`. This project has no guaranteed response time or long-term support commitment.
 
-For a suspected security problem, contact the repository owner privately through an existing authenticated channel. GitHub private vulnerability reporting may be used if it is enabled for the repository. Do not open a public issue containing an exploit, credentials or confidential acquisition data. A dedicated public reporting channel must be confirmed before public launch.
+For a suspected security problem, contact the repository owner privately through an existing authenticated channel. GitHub private vulnerability reporting may be used if it is enabled for the repository. Do not open a public issue containing an exploit, credentials or confidential acquisition data.
 
 Provide the package revision, operating system, Rust version, resource-limit settings and a minimal synthetic reproducer when possible. Describe whether a problem involves unexpected writes, unbounded resource use, a panic or incorrect decoded data.
 

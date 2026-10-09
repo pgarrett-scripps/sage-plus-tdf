@@ -21,28 +21,8 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
-      - run: cargo package --locked
-      - run: cargo test --locked --manifest-path target/package/timsrust-reader-0.1.1-rc.2/Cargo.toml --target-dir target
       - run: cargo doc --locked --no-deps
         env:
-          RUSTDOCFLAGS: -D warnings
-
-  public-preflight:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      CC: prohibited-native-c-compiler
-      CXX: prohibited-native-cxx-compiler
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.97.1
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: python3 scripts/publication_preflight.py
-      - run: cargo doc --locked --all-features --no-deps --target x86_64-unknown-linux-gnu
-        env:
-          DOCS_RS: '1'
           RUSTDOCFLAGS: -D warnings
 
   fuzz-smoke:
@@ -61,14 +41,3 @@ jobs:
       - run: cargo +nightly-2026-09-25 fuzz run schema_calibration --dev -- -max_total_time=30 -timeout=5 -rss_limit_mb=1024 -max_len=32768 -seed=20260926
       - run: git diff --exit-code -- fuzz/Cargo.lock
 
-  public-corpus:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.97.1
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: cargo build --locked --example inspect
-      - run: python3 scripts/qualify_public_corpus.py "$RUNNER_TEMP/reader-public-corpus" --inspect target/debug/examples/inspect

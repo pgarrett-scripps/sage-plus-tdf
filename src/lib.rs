@@ -4,7 +4,7 @@
 //! Calibration is explicit and unsupported source models return an error.
 //!
 //! ```no_run
-//! use timsrust_reader::{Result, TdfReader};
+//! use sage_plus_tdf::{Result, TdfReader};
 //!
 //! fn inspect(path: &str) -> Result<()> {
 //!     let reader = TdfReader::open(path)?;
@@ -24,7 +24,7 @@
 //! Missing calibration and unsupported equations are reported explicitly.
 //!
 //! ```no_run
-//! # use timsrust_reader::{Result, TdfReader};
+//! # use sage_plus_tdf::{Result, TdfReader};
 //! # fn calibrated(reader: &TdfReader, id: u64) -> Result<()> {
 //! let mz = reader.mz_model(id)?.mz(100_000.0)?;
 //! let mobility = reader.mobility_model(id)?.one_over_k0(100.0)?;

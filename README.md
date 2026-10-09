@@ -1,45 +1,34 @@
-# TimsRust Reader
+Fork of MannLabs timsrust by Sander Willems and contributors; not affiliated with MannLabs or Bruker
 
-A read-only Rust reader for completed Bruker TDF `.d` directories. Derived from MannLabs TimsRust 0.6.6 at `80e235a`, with upstream history retained.
+# sage-plus-tdf
 
-The `0.1.1-rc.2` public release candidate is prepared in a private repository. The crate has not been published to crates.io, and no hosted API documentation is available yet. This project is an independent derivative, not an upstream MannLabs release or an official Bruker product.
+A read-only, pure Rust reader for Bruker TDF `.d` directories, used by Sage Plus. It reads the file and nothing else: frames, calibration, metadata and typed tables. Summing, smoothing, centroiding and window splitting belong to the application.
 
-The library exposes original frame IDs, scan offsets, TOF indices, detector intensities and source SQLite metadata. It does not generate pseudo-DDA spectra, merge DIA windows, centroid peaks or write acquisition files.
+Derived from MannLabs timsrust 0.6.6 at `80e235a`, with upstream history retained. Not published to crates.io.
 
-## Scope
+## What it reads
 
-- Reads `analysis.tdf` and `analysis.tdf_bin` using local filesystem paths.
-- Uses the Rust Turso SQLite engine, pinned to `0.8.0-pre.13`, in read-only mode.
-- Uses Rust Zstandard and LZF decoders. No C SQLite or C Zstandard library, Bruker SDK, Python binding, cloud storage, Parquet dependency or export CLI is included.
-- Supports metadata tables and views, case-insensitive schema lookup, quoted identifiers and original sparse frame IDs.
-- Preserves every metadata column through `MetadataDatabase::table`, including precursor, isolation-window and calibration tables.
-- Provides validated source ModelType 2 mobility conversion with boundary continuation matching Sage Plus's Bruker SDK reference.
-- Enforces configurable compressed size, decompressed size, scan and peak limits. Malformed offsets, count mismatches and integer overflows return errors.
+- `analysis.tdf` through the Rust Turso SQLite engine (`turso_core`, pinned to `0.8.0-pre.13`), opened read-only. No C SQLite.
+- `analysis.tdf_bin` frames, Zstandard (compression 2) and LZF (compression 1), with positional reads so one `&TdfReader` can be shared across threads.
+- Raw frame coordinates: original frame IDs, scan offsets, TOF indices and detector intensities. Nothing is rescaled.
+- Typed tables: `Frames`, `GlobalMetadata`, `PasefFrameMsMsInfo`, `Precursors`, `DiaFrameMsMsInfo`, `DiaFrameMsMsWindows`, `DiaFrameMsMsWindowGroups`, `TimsCalibration` and `MzCalibration`. Any other table is available as raw `SqlValue` rows through `TdfReader::metadata`.
+- Calibration: the full ModelType 1 m/z model (per-frame `T1` and `T2`, `dC1`, `dC2`, `C0` to `C4`), agreeing with libtimsdata to better than 0.001 ppm, and the ModelType 2 mobility model in both directions. Other models return `Unsupported`.
+- timsrust-compatible linear m/z and mobility scales, for callers that need timsrust's uncalibrated output.
 
-This branch deliberately changes the API and package name. It is not a drop-in replacement for the upstream `SpectrumReader`. TDF is supported. TSF, BAF, miniTDF and live acquisitions with active SQLite journals are rejected. Raw TOF coordinates are preserved. `TdfReader::mz_model` supports source ModelType 1 with per-frame T1 temperature and zero dC2, C2, C3 and C4. Other models return `Unsupported`, without fitting or substituting approximate masses.
+`TdfReader::open` takes the `.d` directory itself. TSF, BAF, miniTDF and live acquisitions with active SQLite journals are rejected. LZF frames are decoded exactly as libtimsdata does or rejected; they are never silently wrong.
 
 ## Use
 
-Rust 1.97.1 is pinned for reproducible package and CI checks. Install from the private GitHub tag or revision using authenticated Git access. Public crates.io publishing is disabled in the manifest. Calibration tables are loaded once per reader when first requested. `FrameInfo` also exposes recorded polarity, accumulation time, temperature and calibration references when present.
-
-Authenticated Git users can pin the prepared candidate revision in `Cargo.toml`:
-
-```toml
-[dependencies]
-timsrust-reader = { git = "https://github.com/pgarrett-scripps/timsrust-reader", rev = "3ce6db2c37f5618fb2f8275aaac333c7f55d03df" }
-```
-
-A crates.io version dependency is not available until a separately authorized publication.
-
 ```rust,no_run
-use timsrust_reader::TdfReader;
+use sage_plus_tdf::{Result, TdfReader};
 
-fn read(path: &str) -> timsrust_reader::Result<()> {
-    let mut reader = TdfReader::open(path)?;
-    let ids: Vec<_> = reader.frames().map(|frame| frame.id).collect();
-    for id in ids {
-        let frame = reader.read_frame(id)?;
-        println!("frame {}: {} ions", id, frame.tof_indices.len());
+fn read(path: &str) -> Result<()> {
+    let reader = TdfReader::open(path)?;
+    for info in reader.frames() {
+        let frame = reader.read_frame(info.id)?;
+        let mz = reader.mz_model(info.id)?;
+        let first = frame.tof_indices.first().map(|&tof| mz.mz(f64::from(tof)));
+        println!("frame {}: {} ions, first m/z {first:?}", info.id, frame.tof_indices.len());
     }
     Ok(())
 }
@@ -52,28 +41,14 @@ cargo test --locked
 cargo run --locked --example inspect -- /path/to/acquisition.d
 ```
 
-`Limits::default()` allows 256 MiB compressed data, 512 MiB decompressed data, 32 million peaks and 100,000 scans per frame. `TdfReader::with_limits` accepts alternative ceilings. `Limits::metadata` controls metadata materialization and execution. Defaults allow 2 million rows, 256 columns, 16 MiB per source value and approximately 512 MiB of materialized values per query. Queries stop after approximately 100 million VM operations or 30 seconds. These bound this library's output and VM execution, not every internal allocation made by the prerelease database engine. Schema preparation and a single SQLite value may allocate before output checks. Use process isolation when parsing hostile databases.
+`Limits::default()` allows 256 MiB compressed data, 512 MiB decompressed data, 32 million peaks and 100,000 scans per frame. `TdfReader::with_limits` accepts other ceilings, and `Limits::metadata` bounds metadata rows, columns, value sizes and query execution. These bound this library's output, not every allocation inside the prerelease database engine, so isolate processing of hostile databases.
 
-## Evidence and adoption
+## Errors
 
-See [the code review](REVIEW.md) and [machine-readable qualification](qualification.json). DDA, DIA and PRM raw-frame digests match upstream TimsRust exactly on six acquisitions, including a 710-frame acquisition with 26,086,520 ions and an SCP DIA acquisition with 131 frames and 4,470,167 ions. The tests include independently generated SQLite and Zstandard fixtures, LZF decoding, metadata views, malformed frames and mobility reference values.
+`Error::kind()` separates unsupported features, corrupt input, resource ceilings, I/O failures and database failures. `Error::contexts()` names the acquisition path, frame ID, table, field and frame-header byte offset when known, and `Error::root_error()` keeps the original cause. Resource errors report the configured maximum and the observed value. The reader never retries with a larger limit.
 
-Sage Plus and MSConvert RS have not been switched to this branch. Adoption requires replacing their upstream spectrum synthesis calls with explicit application-level processing over these raw frames. Read-only SQLite and view support are part of this library, so there is no `filemanager` patch to carry. Keep application-level scientific validation during the migration.
+## Attribution and license
 
-## Attribution
+Upstream is [MannLabs timsrust](https://github.com/MannLabs/timsrust). The MannLabs MIT notice is in `LICENSE`, the Sage MIT notice in `LICENSE-MIT-SAGE`, the tdfpy MIT notice in `LICENSE-MIT-TDFPY` and the Apache-2.0 text in `LICENSE-APACHE`. See `NOTICE.md` for sources and fixture provenance. No Bruker SDK code or binaries are included.
 
-Upstream is [MannLabs TimsRust](https://github.com/MannLabs/timsrust). The original MannLabs MIT notice is retained in `LICENSE`, and the Sage MIT notice is retained in `LICENSE-MIT-SAGE`. Upstream crate manifests declare Apache-2.0, whose text is retained in `LICENSE-APACHE`. See `NOTICE.md` for source details. Local acquisitions are not distributed.
-
-## Development and release preparation
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development checks, [SECURITY.md](SECURITY.md) for the input trust boundary and vulnerability reporting, and [RELEASING.md](RELEASING.md) for the guarded publication dry run.
-
-## Actionable errors
-
-`Error::kind()` distinguishes unsupported features, corrupt input, resource ceilings, I/O failures and database failures. `Error::contexts()` identifies the acquisition path, frame ID, table, field and binary frame-header byte offset when available. `Error::root_error()` retains the original typed cause, including SQLite, JSON, I/O and decoder failures. Error enums are nonexhaustive. Match the failure category instead of parsing display strings or assuming the outer variant is the original cause.
-
-Resource errors report the configured maximum and observed value. Metadata limits report the table or field being materialized. VM budgets and deadlines remain independent for concurrent callers. Increasing a limit is a caller decision, and the reader never retries with a larger limit automatically.
-
-See `fuzz/README.md` in the source repository for bounded parser checks and [performance measurement instructions](benchmarks/README.md) for deterministic sequential and random-access workloads.
-
-Expanded acquisition evidence and reproducible public corpus downloads are documented in [QUALIFICATION.md](QUALIFICATION.md). Real LZF payload qualification uses explicitly derived copies because the source test databases have inconsistent scan counts. Original inconsistent files remain rejected.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development checks, [SECURITY.md](SECURITY.md) for the input trust boundary and `fuzz/README.md` for bounded parser fuzzing.

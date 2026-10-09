@@ -126,7 +126,8 @@ pub struct GlobalMetadata {
 }
 
 impl GlobalMetadata {
-    pub(crate) fn new(entries: Vec<(String, SqlValue)>) -> Result<Self> {
+    /// Key/value entries in source order. Duplicate keys are rejected.
+    pub fn new(entries: Vec<(String, SqlValue)>) -> Result<Self> {
         for (i, (key, _)) in entries.iter().enumerate() {
             if entries[..i].iter().any(|(k, _)| k == key) {
                 return Err(field(

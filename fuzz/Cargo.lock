@@ -1284,6 +1284,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
+name = "sage-plus-tdf"
+version = "0.2.0"
+dependencies = [
+ "lzf",
+ "ruzstd",
+ "thiserror",
+ "turso_core",
+]
+
+[[package]]
+name = "sage-plus-tdf-fuzz"
+version = "0.0.0"
+dependencies = [
+ "libfuzzer-sys",
+ "lzf",
+ "ruzstd",
+ "sage-plus-tdf",
+ "serde_json",
+]
+
+[[package]]
 name = "scoped-tls"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1528,30 +1549,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ad99c4c6d32803332c548b1af0540b357b3f5fc0be8f6c6bfe8b2e6ae784070"
 dependencies = [
  "cfg-if",
-]
-
-[[package]]
-name = "timsrust-reader"
-version = "0.1.1-rc.2"
-dependencies = [
- "lzf",
- "ruzstd",
- "serde",
- "serde_json",
- "thiserror",
- "turso_core",
-]
-
-[[package]]
-name = "timsrust-reader-fuzz"
-version = "0.0.0"
-dependencies = [
- "libfuzzer-sys",
- "lzf",
- "ruzstd",
- "serde",
- "serde_json",
- "timsrust-reader",
 ]
 
 [[package]]

@@ -9,7 +9,7 @@ cargo +nightly-2026-09-25 fuzz run decoder --dev -- -max_total_time=30 -timeout=
 cargo +nightly-2026-09-25 fuzz run schema_calibration --dev -- -max_total_time=30 -timeout=5 -rss_limit_mb=1024 -max_len=32768 -seed=20260926
 ```
 
-The decoder target limits scans, peaks and decoded output before calling the production implementation. Its seeds include independent LZF and checked Zstandard fixtures. The schema target exercises JSON normalization, strict typed frame extraction, bounds checking and the source mass and mobility models. Its seeds are derived from the attributed fixtures documented in `NOTICE.md`.
+The decoder target limits scans, peaks and decoded output before calling the production implementation. Its seeds include independent LZF and checked Zstandard fixtures. The schema target turns a JSON object into a typed SQLite row and exercises strict typed frame extraction, bounds checking and the source mass and mobility models. Its seeds are derived from the attributed fixtures documented in `NOTICE.md`.
 
 Fuzzing uses AddressSanitizer and development-only libFuzzer C++ tooling. The shipped reader remains a Rust-only runtime. CI bounds each target's elapsed execution time, per-input timeout, input length and process RSS. A short fuzz run is a regression check, not proof that every malformed input is safe. Retain minimized crash inputs as ordinary regression fixtures after review.
 

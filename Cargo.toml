@@ -1,13 +1,12 @@
 [package]
-name = "timsrust-reader"
-version = "0.1.1-rc.2"
+name = "sage-plus-tdf"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.97"
 publish = false
 readme = "README.md"
-include = ["src/**", "examples/**", "tests/**", "Cargo.toml", "Cargo.lock", "README.md", "REVIEW.md", "qualification.json", "LICENSE*", "NOTICE.md", "rust-toolchain.toml", "CONTRIBUTING.md", "SECURITY.md", "RELEASING.md", "CHANGELOG.md", "PUBLIC_READINESS.md", "REFACTOR.md", "benchmarks/**", "QUALIFICATION.md", "public-corpus.json", "public-lzf-qualification.json", "scripts/generate_synthetic_fixtures.py", "scripts/qualify_public_corpus.py"]
 license = "Apache-2.0 AND MIT"
-description = "Read-only native Rust parser for Bruker TDF acquisition directories"
+description = "Read-only pure Rust reader for Bruker TDF frames, calibration and metadata tables, used by Sage Plus"
 repository = "https://github.com/pgarrett-scripps/timsrust-reader"
 keywords = ["mass-spectrometry", "bruker", "tdf", "proteomics"]
 categories = ["science", "parser-implementations"]

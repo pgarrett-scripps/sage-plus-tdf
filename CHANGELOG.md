@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0, unreleased (Sage Plus Beta 17)
+
+- Rename the package to `sage-plus-tdf` (library `sage_plus_tdf`) and drop the publication-preparation documents, qualification JSON, benchmarks and corpus scripts.
+- Implement the full ModelType 1 m/z model (`dC2`/`T2` drift and `C2`, `C3`, `C4`) with a closed-form inverse, checked against libtimsdata to under 0.001 ppm. Add the inverse mobility model.
+- Read frames through `&self` with positional reads, so one reader can be shared across threads.
+- Read `Frames`, `GlobalMetadata`, `PasefFrameMsMsInfo`, `Precursors`, the DIA window tables and both calibration tables as typed rows. Raw rows are `SqlValue`; blobs stay bytes and infinite REALs no longer fail a table.
+- Decode LZF frames exactly as libtimsdata does, including the scan count from the frame header. The old decoder drifted TOF by one bin per gap.
+- Require the `.d` directory in `TdfReader::open`.
+- Add timsrust-compatible linear m/z and mobility scales and the MsMsType-based acquisition type.
+
 ## 0.1.1-rc.2, unpublished public release candidate
 
 - Add structured failure categories, actionable acquisition/frame/table/field locations and retained source errors.
