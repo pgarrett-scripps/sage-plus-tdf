@@ -6,7 +6,7 @@ rust-version = "1.97"
 publish = false
 readme = "README.md"
 license = "Apache-2.0 AND MIT"
-description = "Read-only pure Rust reader for Bruker TDF frames, calibration and metadata tables, used by Sage Plus"
+description = "Read-only pure Rust reader for Bruker TDF and TSF acquisitions and ProteoScape miniTDF spectra, used by Sage Plus"
 repository = "https://github.com/pgarrett-scripps/sage-plus-tdf"
 keywords = ["mass-spectrometry", "bruker", "tdf", "proteomics"]
 categories = ["science", "parser-implementations"]
@@ -21,6 +21,12 @@ turso_core = { version = "=0.8.0-pre.13", default-features = false, features = [
 ruzstd = "=0.9.0"
 lzf = "=1.0.0"
 thiserror = "2"
+parquet = { version = "59.2", default-features = false, features = ["snap", "zstd"], optional = true }
+
+[features]
+default = []
+# ProteoScape miniTDF spectra (Parquet precursor tables).
+minitdf = ["dep:parquet"]
 
 [dev-dependencies]
 serde_json = "1"

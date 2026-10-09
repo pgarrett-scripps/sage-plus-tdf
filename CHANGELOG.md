@@ -9,6 +9,9 @@
 - Decode LZF frames exactly as libtimsdata does, including the scan count from the frame header. The old decoder drifted TOF by one bin per gap.
 - Require the `.d` directory in `TdfReader::open`.
 - Add timsrust-compatible linear m/z and mobility scales and the MsMsType-based acquisition type.
+- Add `TsfReader` for TSF line spectra, `Frames` and `FrameMsMsInfo` precursors. timsrust 0.6 returned TSF MS/MS spectra without precursors and truncated TOF indices; both are now kept.
+- Add the TSF ModelType 2 m/z model and its polynomial correction, checked against Bruker SDK centroids to under 0.001 ppm.
+- Add `MiniTdfReader` behind the `minitdf` feature. Unlike timsrust 0.6, it finds the `<name>.ms2spectrum.*` files ProteoScape writes and keeps m/z as `f64`.
 
 ## 0.1.1-rc.2, unpublished public release candidate
 

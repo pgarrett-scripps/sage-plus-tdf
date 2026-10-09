@@ -1,9 +1,9 @@
-//! TDF schema interpretation, separate from generic SQLite access and binary I/O.
+//! TDF and TSF schema interpretation, separate from generic SQLite access and binary I/O.
 use crate::{
     DiaFrameMsMsInfo, DiaFrameMsMsWindow, DiaFrameMsMsWindowGroup, Error, ErrorContext, FrameInfo,
     GlobalMetadata, Limits, MetadataDatabase, MetadataLimits, MetadataRow, MobilityModel,
     MzCalibration, MzModel, PasefFrameMsMsInfo, Precursor, Result, SqlValue, TimsCalibration,
-    field, invalid, limit,
+    TsfFrameInfo, TsfFrameMsMsInfo, field, invalid, limit,
 };
 use std::{collections::BTreeMap, path::Path, sync::OnceLock};
 
@@ -188,16 +188,24 @@ impl TdfMetadata {
     }
 
     pub(crate) fn mz_model(&self, frame: &FrameInfo) -> Result<MzModel> {
-        let id = frame.mz_calibration_id.ok_or_else(|| {
+        self.mz_model_for(frame.mz_calibration_id, frame.t1, frame.t2)
+    }
+
+    /// Model from a frame's `MzCalibration`, `T1` and `T2` columns.
+    pub(crate) fn mz_model_for(
+        &self,
+        calibration: Option<u64>,
+        t1: Option<f64>,
+        t2: Option<f64>,
+    ) -> Result<MzModel> {
+        let id = calibration.ok_or_else(|| {
             field(
                 invalid("missing calibration reference"),
                 "Frames",
                 "MzCalibration",
             )
         })?;
-        let t1 = frame
-            .t1
-            .ok_or_else(|| field(invalid("missing frame temperature"), "Frames", "T1"))?;
+        let t1 = t1.ok_or_else(|| field(invalid("missing frame temperature"), "Frames", "T1"))?;
         let calibration = self.mz_calibrations()?.get(&id).ok_or_else(|| {
             field(
                 invalid(format!("missing calibration identifier {id}")),
@@ -206,11 +214,57 @@ impl TdfMetadata {
             )
         })?;
         // Without a frame T2 the dC2 term is only known when it vanishes.
-        let t2 = frame
-            .t2
+        let t2 = t2
             .or((calibration.dc2 == 0.0).then_some(calibration.t2))
             .ok_or_else(|| field(invalid("missing frame temperature"), "Frames", "T2"))?;
         MzModel::new(calibration, t1, t2)
+    }
+
+    /// TSF `Frames` rows by `Id`.
+    pub(crate) fn tsf_frames(
+        &self,
+        limits: Limits,
+        binary_length: u64,
+    ) -> Result<BTreeMap<u64, TsfFrameInfo>> {
+        let mut frames = BTreeMap::new();
+        for row in self.database.table("Frames")? {
+            let id = row.get("Id").and_then(SqlValue::as_i64);
+            let frame = parse_tsf_frame(&row)
+                .and_then(|frame| {
+                    validate_tsf_frame(&frame, limits, binary_length)?;
+                    Ok(frame)
+                })
+                .map_err(|error| {
+                    error.with_context(ErrorContext {
+                        frame_id: id.and_then(|id| u64::try_from(id).ok()),
+                        table: Some("Frames".into()),
+                        ..Default::default()
+                    })
+                })?;
+            let id = frame.id;
+            if frames.insert(id, frame).is_some() {
+                return Err(field(invalid("duplicate frame identifier"), "Frames", "Id")
+                    .with_context(ErrorContext {
+                        frame_id: Some(id),
+                        ..Default::default()
+                    }));
+            }
+        }
+        Ok(frames)
+    }
+
+    /// TSF `FrameMsMsInfo`: one isolation per MS/MS frame.
+    pub(crate) fn tsf_frame_msms_info(&self) -> Result<Vec<TsfFrameMsMsInfo>> {
+        self.rows("FrameMsMsInfo", |c| {
+            Ok(TsfFrameMsMsInfo {
+                frame: c.u64("Frame")?,
+                parent: c.opt_u64("Parent")?,
+                trigger_mass: c.f64("TriggerMass")?,
+                isolation_width: c.f64("IsolationWidth")?,
+                precursor_charge: c.opt_i64("PrecursorCharge")?,
+                collision_energy: c.opt_f64("CollisionEnergy")?,
+            })
+        })
     }
 }
 
@@ -265,6 +319,16 @@ pub(crate) fn mz_calibration(c: &Columns) -> Result<MzCalibration> {
         c2: c.f64("C2")?,
         c3: c.f64("C3")?,
         c4: c.f64("C4")?,
+        c5_to_c14: {
+            const NAMES: [&str; 10] = [
+                "C5", "C6", "C7", "C8", "C9", "C10", "C11", "C12", "C13", "C14",
+            ];
+            let mut values = [None; 10];
+            for (value, name) in values.iter_mut().zip(NAMES) {
+                *value = c.opt_f64(name)?;
+            }
+            values
+        },
     })
 }
 
@@ -327,6 +391,60 @@ pub(crate) fn validate_frame(frame: &FrameInfo, limits: Limits, binary_length: u
         )
         .with_context(ErrorContext {
             byte_offset: Some(frame.binary_offset),
+            ..Default::default()
+        }));
+    }
+    Ok(())
+}
+
+pub(crate) fn parse_tsf_frame(row: &MetadataRow) -> Result<TsfFrameInfo> {
+    let c = Columns {
+        row,
+        table: "Frames",
+    };
+    Ok(TsfFrameInfo {
+        id: c.u64("Id")?,
+        retention_time_seconds: c.f64("Time")?,
+        polarity: c.text("Polarity")?,
+        scan_mode: c.opt_u32("ScanMode")?,
+        msms_type: c.u32("MsMsType")?,
+        binary_offset: c.opt_u64("TimsId")?,
+        max_intensity: c.opt_f64("MaxIntensity")?,
+        summed_intensities: c.opt_f64("SummedIntensities")?,
+        peak_count: c.opt_unsigned::<usize>("NumPeaks")?,
+        mz_calibration_id: c.opt_u64("MzCalibration")?,
+        t1: c.opt_f64("T1")?,
+        t2: c.opt_f64("T2")?,
+        property_group: c.opt_u64("PropertyGroup")?,
+    })
+}
+
+fn validate_tsf_frame(frame: &TsfFrameInfo, limits: Limits, binary_length: u64) -> Result<()> {
+    if frame.id == 0 {
+        return Err(field(invalid("zero frame identifier"), "Frames", "Id"));
+    }
+    if frame.retention_time_seconds < 0.0 {
+        return Err(field(invalid("invalid retention time"), "Frames", "Time"));
+    }
+    if let Some(peaks) = frame.peak_count
+        && peaks > limits.max_peaks
+    {
+        return Err(field(
+            limit("peaks", limits.max_peaks, peaks),
+            "Frames",
+            "NumPeaks",
+        ));
+    }
+    if let Some(offset) = frame.binary_offset
+        && offset.checked_add(8).is_none_or(|end| end > binary_length)
+    {
+        return Err(field(
+            invalid("frame header is outside binary file"),
+            "Frames",
+            "TimsId",
+        )
+        .with_context(ErrorContext {
+            byte_offset: Some(offset),
             ..Default::default()
         }));
     }

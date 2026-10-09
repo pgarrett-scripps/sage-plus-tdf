@@ -111,6 +111,57 @@ pub struct DiaFrameMsMsWindowGroup {
     pub id: u32,
 }
 
+/// One TSF `Frames` row: a single spectrum without a mobility dimension.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TsfFrameInfo {
+    pub id: u64,
+    /// `Time`, in seconds.
+    pub retention_time_seconds: f64,
+    pub polarity: Option<String>,
+    pub scan_mode: Option<u32>,
+    pub msms_type: u32,
+    /// `TimsId`: byte offset of the frame in `analysis.tsf_bin`, if it has data.
+    pub binary_offset: Option<u64>,
+    pub max_intensity: Option<f64>,
+    pub summed_intensities: Option<f64>,
+    /// `NumPeaks` of the line (centroid) spectrum. NULL without line spectra.
+    pub peak_count: Option<usize>,
+    pub mz_calibration_id: Option<u64>,
+    pub t1: Option<f64>,
+    pub t2: Option<f64>,
+    pub property_group: Option<u64>,
+}
+
+impl TsfFrameInfo {
+    /// MS level as ProteoWizard reads TSF: `MsMsType` 0 is MS1, anything else MS2.
+    pub fn ms_level(&self) -> u8 {
+        if self.msms_type == 0 { 1 } else { 2 }
+    }
+}
+
+/// One TSF `FrameMsMsInfo` row: the isolation of one MS/MS frame.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TsfFrameMsMsInfo {
+    pub frame: u64,
+    /// MS1 frame the precursor was picked from.
+    pub parent: Option<u64>,
+    /// Isolation center, in m/z.
+    pub trigger_mass: f64,
+    /// Full isolation width, in m/z.
+    pub isolation_width: f64,
+    pub precursor_charge: Option<i64>,
+    pub collision_energy: Option<f64>,
+}
+
+/// A TSF line spectrum: fractional TOF indices (convert with
+/// [`crate::TsfReader::mz_model`]) and intensities, as stored.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LineSpectrum {
+    pub frame_id: u64,
+    pub indices: Vec<f64>,
+    pub intensities: Vec<f32>,
+}
+
 /// One `TimsCalibration` row. ModelType 2 rows feed [`crate::MobilityModel`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct TimsCalibration {

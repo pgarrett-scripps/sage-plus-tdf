@@ -295,12 +295,16 @@ impl TdfReader {
 }
 
 #[cfg(unix)]
-fn read_exact_at(file: &File, buffer: &mut [u8], offset: u64) -> std::io::Result<()> {
+pub(crate) fn read_exact_at(file: &File, buffer: &mut [u8], offset: u64) -> std::io::Result<()> {
     std::os::unix::fs::FileExt::read_exact_at(file, buffer, offset)
 }
 
 #[cfg(windows)]
-fn read_exact_at(file: &File, mut buffer: &mut [u8], mut offset: u64) -> std::io::Result<()> {
+pub(crate) fn read_exact_at(
+    file: &File,
+    mut buffer: &mut [u8],
+    mut offset: u64,
+) -> std::io::Result<()> {
     use std::os::windows::fs::FileExt;
     while !buffer.is_empty() {
         match file.seek_read(buffer, offset) {

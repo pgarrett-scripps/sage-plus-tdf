@@ -13,6 +13,10 @@ The original repository license notice and upstream package license declaration 
 The ModelType 1 mass equations were first adapted from MSConvert RS source calibration, which documents the timsrust-calibration 0.1.1 equations. The full model, including the `dC2` and `T2` drift and the `C2`, `C3` and `C4` terms, is checked against Bruker `tims_index_to_mz` and `tims_mz_to_index` outputs recorded in `tests/fixtures/mz_calibration_sdk.json`. That fixture holds only calibration coefficients, temperatures, coordinates and SDK outputs for the tdfpy v2.2.0 public test acquisitions described below. No Bruker SDK code or binaries are included.
 
 
+The TSF line spectrum layout in `src/tsf.rs` derives from upstream `crates/timsrust-tsf` 0.6.6, and the miniTDF blob layout, precursor columns and isolation width heuristic in `src/minitdf.rs` from upstream `crates/timsrust-minitdf` 0.6.6. Both crates declare Apache-2.0. `tests/fixtures/minitdf.d` is a copy of the upstream `src/tests/test2.ms2` test data, renamed to a directory.
+
+The TSF `FrameMsMsInfo` precursor mapping (trigger mass as the isolation center and selected ion, isolation width split evenly) follows ProteoWizard's Bruker TSF reader (`pwiz_aux/msrc/utility/vendor_api/Bruker`, Apache-2.0); no ProteoWizard code is included. The TSF ModelType 2 m/z model was reconstructed from public data: the calibration rows of ProteoWizard's `timsTOF_autoMSMS_Urine_50s_neg.d` test acquisition and the Bruker SDK centroid m/z values in its reference mzML. The SDK reference points in `tests/fixtures/tsf.d` and the unit tests come from that file. No Bruker SDK code or binaries are included.
+
 ## Source revisions and license interpretation
 
 The MannLabs root `LICENSE` at `80e235a331057e0ef922eb3c784b7a631c9b9666` contains the MIT grant and Copyright 2026 MannLabs. At the same revision, `crates/timsrust-tdf/Cargo.toml` declares Apache-2.0. Both texts are retained. The package expression `Apache-2.0 AND MIT` preserves the obligations of the mixed source origins and does not assert that recipients can choose either license.

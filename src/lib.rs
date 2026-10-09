@@ -1,4 +1,5 @@
-//! Read-only TDF frames and source metadata without spectrum synthesis.
+//! Read-only Bruker TDF frames, TSF line spectra and miniTDF spectra, with
+//! source metadata and without spectrum synthesis.
 //!
 //! Frame identifiers, scan offsets, TOF indices and detector intensities are retained.
 //! Calibration is explicit and unsupported source models return an error.
@@ -37,21 +38,28 @@ mod compression;
 mod database;
 mod error;
 mod mass;
+#[cfg(feature = "minitdf")]
+mod minitdf;
 mod mobility;
 mod reader;
 mod schema;
 mod tables;
+mod tsf;
 
 pub use database::{MetadataDatabase, MetadataLimits, MetadataRow, SqlValue};
 pub use error::{Error, ErrorContext, ErrorKind};
 pub(crate) use error::{field, invalid, limit};
 pub use mass::{LinearMzScale, MzCalibration, MzModel};
+#[cfg(feature = "minitdf")]
+pub use minitdf::{MiniTdfPrecursor, MiniTdfReader, MiniTdfSpectrum};
 pub use mobility::{LinearMobilityScale, MobilityModel};
 pub use reader::TdfReader;
 pub use tables::{
     AcquisitionType, DiaFrameMsMsInfo, DiaFrameMsMsWindow, DiaFrameMsMsWindowGroup, FrameInfo,
-    GlobalMetadata, PasefFrameMsMsInfo, Precursor, TimsCalibration,
+    GlobalMetadata, LineSpectrum, PasefFrameMsMsInfo, Precursor, TimsCalibration, TsfFrameInfo,
+    TsfFrameMsMsInfo,
 };
+pub use tsf::TsfReader;
 
 pub type Result<T> = std::result::Result<T, Error>;
 

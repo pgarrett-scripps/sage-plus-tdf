@@ -1,4 +1,4 @@
-//! Bruker `MzCalibration` ModelType 1 and the timsrust-compatible linear m/z scale.
+//! Bruker `MzCalibration` ModelTypes 1 and 2 and the timsrust-compatible linear m/z scale.
 use crate::{Error, Result, field, invalid};
 
 /// One `MzCalibration` row, typed. Column names follow the TDF schema.
@@ -19,10 +19,15 @@ pub struct MzCalibration {
     pub c2: f64,
     pub c3: f64,
     pub c4: f64,
+    /// `C5` to `C14`, present in TSF schemas. ModelType 2 reads them; a missing
+    /// column is `None`.
+    pub c5_to_c14: [Option<f64>; 10],
 }
 
-/// The ModelType 1 mass calibration of one frame, as computed by Bruker's
-/// `tims_index_to_mz` and `tims_mz_to_index`.
+/// The mass calibration of one frame, as computed by Bruker's
+/// `tims_index_to_mz` / `tsf_index_to_mz` and their inverses.
+///
+/// ModelType 1 (TDF and TSF):
 ///
 /// ```text
 /// t      = DigitizerDelay + tof_index * DigitizerTimebase
@@ -32,9 +37,24 @@ pub struct MzCalibration {
 /// t - C0 = 1e6 * sqrt(m / C1') + r * (C2 * m + C3 * m^1.5)
 /// ```
 ///
-/// m/z to TOF is closed form. TOF to m/z solves the cubic in `sqrt(m)` by Newton
-/// iteration. Both agree with libtimsdata to better than 0.001 ppm on real
-/// calibrations (see `tests/fixtures/mz_calibration_sdk.json`).
+/// ModelType 2 (seen in TSF) has the same core without the `C3` and `C4` terms
+/// (those columns repeat `C0` and `C2`), giving an uncorrected `m`. A
+/// polynomial `P(x) = sum C(8+k) x^k`, `k < C7`, is then subtracted, fitted on
+/// `[C5, C6]` and fading as a Gaussian of unit width (in Th) outside it:
+///
+/// ```text
+/// x  = clamp(m, C5, C6)
+/// mz = m - P(x) * exp(-(m - x)^2)
+/// ```
+///
+/// ModelType 2 is reconstructed from SDK output, not a specification: it
+/// matches Bruker's SDK to 0.0001 ppm on every centroid of a timsTOF fleX
+/// TSF run (`timsTOF_autoMSMS_Urine_50s_neg.d`, 70,265 peaks). Rows where
+/// `C3`/`C4` differ from `C0`/`C2` are rejected as unverified.
+///
+/// m/z to TOF is closed form for ModelType 1. TOF to m/z solves the cubic in
+/// `sqrt(m)` by Newton iteration. ModelType 1 agrees with libtimsdata to better
+/// than 0.001 ppm on real calibrations (see `tests/fixtures/mz_calibration_sdk.json`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MzModel {
     timebase: f64,
@@ -45,19 +65,106 @@ pub struct MzModel {
     a1: f64,
     a2: f64,
     a3: f64,
+    correction: Option<Correction>,
+}
+
+/// The ModelType 2 polynomial correction.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Correction {
+    lower: f64,
+    upper: f64,
+    terms: usize,
+    coefficients: [f64; 7],
+}
+
+impl Correction {
+    fn new(c: &MzCalibration) -> Result<Self> {
+        let column = |i: usize| {
+            c.c5_to_c14[i - 5].ok_or_else(|| {
+                field(
+                    invalid("missing ModelType 2 coefficient"),
+                    "MzCalibration",
+                    &format!("C{i}"),
+                )
+            })
+        };
+        let (lower, upper, terms) = (column(5)?, column(6)?, column(7)?);
+        if !(lower.is_finite() && upper.is_finite() && lower < upper) {
+            return Err(field(
+                invalid("invalid ModelType 2 correction range"),
+                "MzCalibration",
+                "C5",
+            ));
+        }
+        if terms.fract() != 0.0 || !(0.0..=7.0).contains(&terms) {
+            return Err(field(
+                invalid("ModelType 2 term count must be an integer from 0 to 7"),
+                "MzCalibration",
+                "C7",
+            ));
+        }
+        let terms = terms as usize;
+        let mut coefficients = [0.0; 7];
+        for (k, value) in coefficients.iter_mut().enumerate().take(terms) {
+            *value = column(8 + k)?;
+            if !value.is_finite() {
+                return Err(field(
+                    invalid("nonfinite ModelType 2 coefficient"),
+                    "MzCalibration",
+                    &format!("C{}", 8 + k),
+                ));
+            }
+        }
+        Ok(Self {
+            lower,
+            upper,
+            terms,
+            coefficients,
+        })
+    }
+
+    /// Amount subtracted from the uncorrected m/z `m`.
+    fn offset(&self, m: f64) -> f64 {
+        let x = m.clamp(self.lower, self.upper);
+        let p = self.coefficients[..self.terms]
+            .iter()
+            .rev()
+            .fold(0.0, |sum, c| sum * x + c);
+        p * (-(m - x) * (m - x)).exp()
+    }
 }
 
 impl MzModel {
     /// Model for a frame recorded at temperatures `frame_t1` and `frame_t2`.
     pub fn new(calibration: &MzCalibration, frame_t1: f64, frame_t2: f64) -> Result<Self> {
         let c = calibration;
-        if c.model_type != 1 {
-            return Err(field(
-                Error::Unsupported(format!("m/z ModelType {} (only 1 is known)", c.model_type)),
-                "MzCalibration",
-                "ModelType",
-            ));
-        }
+        let correction = match c.model_type {
+            1 => None,
+            2 => {
+                if c.c3 != c.c0 || c.c4 != c.c2 {
+                    return Err(field(
+                        Error::Unsupported(
+                            "m/z ModelType 2 with C3/C4 differing from C0/C2".into(),
+                        ),
+                        "MzCalibration",
+                        "C3",
+                    ));
+                }
+                Some(Correction::new(c)?)
+            }
+            other => {
+                return Err(field(
+                    Error::Unsupported(format!("m/z ModelType {other} (only 1 and 2 are known)")),
+                    "MzCalibration",
+                    "ModelType",
+                ));
+            }
+        };
+        let (c3, c4) = if correction.is_some() {
+            (0.0, 0.0)
+        } else {
+            (c.c3, c.c4)
+        };
         let values = [
             c.digitizer_timebase,
             c.digitizer_delay,
@@ -68,8 +175,8 @@ impl MzModel {
             c.c0,
             c.c1,
             c.c2,
-            c.c3,
-            c.c4,
+            c3,
+            c4,
             frame_t1,
             frame_t2,
         ];
@@ -93,10 +200,11 @@ impl MzModel {
             timebase: c.digitizer_timebase,
             delay: c.digitizer_delay,
             c0: c.c0,
-            c4: c.c4,
+            c4,
             a1: 1e6 / c1.sqrt(),
             a2: c.c2 * ratio,
-            a3: c.c3 * ratio,
+            a3: c3 * ratio,
+            correction,
         })
     }
 
@@ -128,7 +236,10 @@ impl MzModel {
                 break;
             }
         }
-        let mz = x * x - self.c4;
+        let mut mz = x * x - self.c4;
+        if let Some(correction) = &self.correction {
+            mz -= correction.offset(mz);
+        }
         if !mz.is_finite() || x <= 0.0 || mz <= 0.0 {
             return Err(invalid("invalid calibrated m/z"));
         }
@@ -137,7 +248,21 @@ impl MzModel {
 
     /// Fractional TOF index of an m/z value, the inverse of [`MzModel::mz`].
     pub fn tof_index(&self, mz: f64) -> Result<f64> {
-        let m = mz + self.c4;
+        let mut m = mz + self.c4;
+        if let Some(correction) = &self.correction {
+            // Fixed point of m = mz + offset(m); the offset varies by ppm per Th.
+            for _ in 0..64 {
+                let next = mz + correction.offset(m);
+                if !next.is_finite() {
+                    return Err(invalid("m/z is outside the calibration domain"));
+                }
+                let step = next - m;
+                m = next;
+                if step.abs() <= 1e-15 * m.abs() {
+                    break;
+                }
+            }
+        }
         if !m.is_finite() || m <= 0.0 {
             return Err(invalid("m/z is outside the calibration domain"));
         }
@@ -203,7 +328,78 @@ mod tests {
             c2: 0.01,
             c3: 0.02,
             c4: 0.3,
+            c5_to_c14: [None; 10],
         }
+    }
+
+    const SDK_POINTS: [(f64, f64); 8] = [
+        (221.5, 20.155193851563446),
+        (77259.97916666667, 111.04787914506481),
+        (78425.64772727272, 112.98545043063426),
+        (227807.9090909091, 499.86573762004514),
+        (331255.0294117647, 928.991931919409),
+        (331486.875, 930.1019414903158),
+        (331749.01666666666, 931.3590318575407),
+        (400391.14, 1289.3342981641363),
+    ];
+
+    /// The urine TSF run's ModelType 2 row.
+    fn model_type_2() -> MzCalibration {
+        MzCalibration {
+            id: 1,
+            model_type: 2,
+            digitizer_timebase: 0.2,
+            digitizer_delay: 11713.6,
+            t1: 26.033650228332323,
+            t2: 31.759732732508898,
+            dc1: 20.0,
+            dc2: 0.0,
+            c0: 321.6281669619091,
+            c1: 154106.10635395756,
+            c2: 0.0010977838105375988,
+            c3: 321.6281669619091,
+            c4: 0.0010977838105375988,
+            c5_to_c14: [
+                Some(111.985626),
+                Some(929.834709),
+                Some(7.0),
+                Some(-0.008000452158366601),
+                Some(0.00011161355141355055),
+                Some(-5.29643113538779e-07),
+                Some(1.2037715403038465e-09),
+                Some(-1.4397727161577292e-12),
+                Some(8.502506375101492e-16),
+                Some(-1.8370479745732004e-19),
+            ],
+        }
+    }
+
+    #[test]
+    fn model_type_2_matches_sdk_centroids() {
+        // Frame 1 of timsTOF_autoMSMS_Urine_50s_neg.d: line index, SDK m/z
+        // (ProteoWizard Reader_Bruker_Test.data mzML), below, inside and above [C5, C6].
+        let model = MzModel::new(&model_type_2(), 26.048285014622895, 31.906942058709145).unwrap();
+        for (index, sdk) in SDK_POINTS {
+            let mz = model.mz(index).unwrap();
+            assert!(((mz - sdk) / sdk).abs() < 1e-9, "{index}: {mz} vs {sdk}");
+            assert!((model.tof_index(mz).unwrap() - index).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn model_type_2_rejects_unverified_rows() {
+        let mut c = model_type_2();
+        c.c3 = 0.0;
+        assert_eq!(
+            MzModel::new(&c, 26.0, 31.0).unwrap_err().kind(),
+            crate::ErrorKind::Unsupported
+        );
+        let mut c = model_type_2();
+        c.c5_to_c14[2] = Some(8.0);
+        assert!(MzModel::new(&c, 26.0, 31.0).is_err());
+        let mut c = model_type_2();
+        c.c5_to_c14[9] = None;
+        assert!(MzModel::new(&c, 26.0, 31.0).is_err());
     }
 
     #[test]
@@ -218,7 +414,7 @@ mod tests {
     #[test]
     fn rejects_unknown_models_and_domains() {
         let mut c = calibration();
-        c.model_type = 2;
+        c.model_type = 3;
         assert_eq!(
             MzModel::new(&c, 25.0, 25.0).unwrap_err().kind(),
             crate::ErrorKind::Unsupported

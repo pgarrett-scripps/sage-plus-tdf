@@ -2,7 +2,7 @@ Fork of MannLabs timsrust by Sander Willems and contributors; not affiliated wit
 
 # sage-plus-tdf
 
-A read-only, pure Rust reader for Bruker TDF `.d` directories, used by Sage Plus. It reads the file and nothing else: frames, calibration, metadata and typed tables. Summing, smoothing, centroiding and window splitting belong to the application.
+A read-only, pure Rust reader for Bruker TDF and TSF `.d` directories and ProteoScape miniTDF spectra, used by Sage Plus. It reads the file and nothing else: frames, calibration, metadata and typed tables. Summing, smoothing, centroiding and window splitting belong to the application.
 
 Derived from MannLabs timsrust 0.6.6 at `80e235a`, with upstream history retained. Not published to crates.io.
 
@@ -14,8 +14,10 @@ Derived from MannLabs timsrust 0.6.6 at `80e235a`, with upstream history retaine
 - Typed tables: `Frames`, `GlobalMetadata`, `PasefFrameMsMsInfo`, `Precursors`, `DiaFrameMsMsInfo`, `DiaFrameMsMsWindows`, `DiaFrameMsMsWindowGroups`, `TimsCalibration` and `MzCalibration`. Any other table is available as raw `SqlValue` rows through `TdfReader::metadata`.
 - Calibration: the full ModelType 1 m/z model (per-frame `T1` and `T2`, `dC1`, `dC2`, `C0` to `C4`), agreeing with libtimsdata to better than 0.001 ppm, and the ModelType 2 mobility model in both directions. Other models return `Unsupported`.
 - timsrust-compatible linear m/z and mobility scales, for callers that need timsrust's uncalibrated output.
+- TSF (`TsfReader`): `analysis.tsf` frames, `FrameMsMsInfo` precursors (trigger mass, isolation width, optional charge) and `analysis.tsf_bin` line (centroid) spectra as fractional TOF indices and intensities. Calibrated m/z through ModelType 1 or the ModelType 2 model with its polynomial correction, which agrees with the Bruker SDK to better than 0.001 ppm on public test data. Profile spectra are not read.
+- miniTDF (`MiniTdfReader`, `minitdf` feature): the `ms2spectrum.parquet` precursor table and `ms2spectrum.bin` centroided MS2 spectra, under the plain or the `<name>.ms2spectrum.*` names. Adds a pure Rust Parquet dependency with Snappy and Zstandard support. miniTDF MS1 frames (`msframe.*`) are not read.
 
-`TdfReader::open` takes the `.d` directory itself. TSF, BAF, miniTDF and live acquisitions with active SQLite journals are rejected. LZF frames are decoded exactly as libtimsdata does or rejected; they are never silently wrong.
+`TdfReader::open` takes the `.d` directory itself, as does `TsfReader::open`; `MiniTdfReader::open` takes the directory holding the spectrum files. BAF and live acquisitions with active SQLite journals are rejected. LZF frames are decoded exactly as libtimsdata does or rejected; they are never silently wrong.
 
 ## Use
 

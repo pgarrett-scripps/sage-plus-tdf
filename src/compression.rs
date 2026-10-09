@@ -84,6 +84,17 @@ fn decode_v2(
             expected,
         ));
     }
+    let decoded = zstd(data, expected, limits)?;
+    decode_v2_bytes(&decoded, scans, peaks, frame)
+}
+
+/// Decode one complete Zstandard frame of at most `max_bytes` output bytes.
+/// Longer output is corrupt, or a resource limit when `max_bytes` exceeds
+/// `limits.max_decompressed_bytes`. Trailing compressed bytes, truncation and
+/// checksum mismatches are errors. Shared by TDF, TSF and miniTDF blobs.
+pub(crate) fn zstd(data: &[u8], max_bytes: usize, limits: Limits) -> Result<Vec<u8>> {
+    let capped = max_bytes > limits.max_decompressed_bytes;
+    let max_bytes = max_bytes.min(limits.max_decompressed_bytes);
     let mut decoder = ruzstd::decoding::StreamingDecoder::new_with_max_window_size(
         data,
         limits.max_decompressed_bytes as u64,
@@ -104,15 +115,22 @@ fn decode_v2(
             source: Box::new(source),
         }
     })?;
-    let mut decoded = Vec::with_capacity(expected);
+    let mut decoded = Vec::new();
     decoder
         .by_ref()
-        .take(expected as u64 + 1)
+        .take(max_bytes as u64 + 1)
         .read_to_end(&mut decoded)
         .map_err(|source| Error::Decoder {
             format: "Zstandard",
             source: Box::new(source),
         })?;
+    if decoded.len() > max_bytes {
+        return Err(if capped {
+            limit("decompressed_bytes", max_bytes, decoded.len())
+        } else {
+            invalid("decoded byte count exceeds the recorded extent")
+        });
+    }
     if !decoder.decoder.is_finished() || !decoder.get_ref().is_empty() {
         return Err(invalid(
             "incomplete Zstandard frame or trailing compressed bytes",
@@ -123,7 +141,7 @@ fn decode_v2(
     {
         return Err(invalid("Zstandard checksum mismatch"));
     }
-    decode_v2_bytes(&decoded, scans, peaks, frame)
+    Ok(decoded)
 }
 
 fn decode_v2_bytes(bytes: &[u8], scans: usize, peaks: usize, frame: &mut Frame) -> Result<()> {

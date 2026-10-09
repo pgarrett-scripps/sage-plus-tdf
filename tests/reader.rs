@@ -234,6 +234,7 @@ fn mz_calibration(value: &serde_json::Value) -> MzCalibration {
         c2: n("C2"),
         c3: n("C3"),
         c4: n("C4"),
+        c5_to_c14: [None; 10],
     }
 }
 
