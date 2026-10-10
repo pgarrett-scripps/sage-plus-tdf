@@ -126,7 +126,8 @@ jobs:
       - run: cargo publish --locked --dry-run
       - name: check package size
         run: |
-          crate="$(ls target/package/sage-plus-tdf-*.crate)"
+          cargo package --locked --no-verify
+          crate="$(find target/package -maxdepth 1 -name 'sage-plus-tdf-*.crate' | head -1)"
           size="$(stat -c %s "$crate")"
           echo "$crate: $size bytes"
           # crates.io rejects crates over 10 MB; keep far below it.
