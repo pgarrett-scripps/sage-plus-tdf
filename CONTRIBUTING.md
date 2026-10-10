@@ -1,17 +1,20 @@
 # Contributing
 
-This repository is private and the crate is not published. It exists to serve Sage Plus. Use pull requests to propose changes against `main`.
+This crate is developed for [Sage Plus](https://github.com/pgarrett-scripps/sage-plus) and published on crates.io for anyone who needs to read Bruker timsTOF data from Rust. Open an issue to discuss larger changes, and use pull requests against `main`. Everyone taking part is expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 Keep the library focused on reading completed Bruker TDF acquisitions: frames, calibration, metadata and typed tables. Spectrum synthesis, summing, centroiding, writing acquisition files, the Bruker SDK and native C SQLite or Zstandard dependencies are outside its scope. Scientific conversions must use recorded source metadata with independently justified equations. Unsupported models must return explicit errors.
 
-Use Rust 1.97.1 from `rust-toolchain.toml`. Before submitting a change, run:
+Development uses Rust 1.97.1 from `rust-toolchain.toml`, which pins formatting and lint results; the published crate only requires Rust 1.97 (`rust-version`). Before submitting a change, run:
 
 ```sh
 cargo fmt --all --check
-cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked
-cargo doc --locked --no-deps
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo test --locked --all-features
+RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --all-features
+cargo deny check
 ```
+
+The `minitdf` feature builds the C `zstd` library through `parquet`, so `--all-features` needs a C compiler. The default features must stay pure Rust; CI builds and tests them with the C compiler disabled. CI also runs these checks on macOS and Windows, builds with the MSRV, runs `cargo publish --dry-run` and smoke-tests the fuzz targets.
 
 Include a focused regression test for parsing or scientific behavior changes. Synthetic fixtures are preferred for malformed inputs. Record the origin, license and independent expected result of every reference fixture. Do not commit private acquisition data, patient information, access tokens or unpublished results. Describe any changes to supported formats or calibration models in the README.
 

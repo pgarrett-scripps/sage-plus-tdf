@@ -1,0 +1,29 @@
+name: Feature request
+description: Read a table, format or calibration model that is not supported yet.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This crate reads completed Bruker acquisitions and nothing else. Spectrum processing (summing, centroiding, window splitting) belongs to the application.
+  - type: textarea
+    id: need
+    attributes:
+      label: What do you need to read
+      description: The table, file, field or calibration model, and what you would do with it.
+    validations:
+      required: true
+  - type: dropdown
+    id: acquisition-type
+    attributes:
+      label: Acquisition type
+      options:
+        - TDF
+        - TSF
+        - miniTDF
+        - Other
+  - type: textarea
+    id: data
+    attributes:
+      label: Example data and reference values
+      description: A public acquisition and independent reference output (for example Bruker SDK values) that a test could check against.

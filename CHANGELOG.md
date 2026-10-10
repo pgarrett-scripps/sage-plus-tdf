@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.2.0, unreleased (Sage Plus Beta 17)
+## 0.2.0, unreleased
+
+First crates.io release.
 
 - Rename the package to `sage-plus-tdf` (library `sage_plus_tdf`) and drop the publication-preparation documents, qualification JSON, benchmarks and corpus scripts.
 - Implement the full ModelType 1 m/z model (`dC2`/`T2` drift and `C2`, `C3`, `C4`) with a closed-form inverse, checked against libtimsdata to under 0.001 ppm. Add the inverse mobility model.
@@ -12,6 +14,8 @@
 - Add `TsfReader` for TSF line spectra, `Frames` and `FrameMsMsInfo` precursors. timsrust 0.6 returned TSF MS/MS spectra without precursors and truncated TOF indices; both are now kept.
 - Add the TSF ModelType 2 m/z model and its polynomial correction, checked against Bruker SDK centroids to under 0.001 ppm.
 - Add `MiniTdfReader` behind the `minitdf` feature. Unlike timsrust 0.6, it finds the `<name>.ms2spectrum.*` files ProteoScape writes and keeps m/z as `f64`.
+- Move `turso_core` from `0.8.0-pre.13` to the stable `0.8.2` and `parquet` from 59 to 60. Tests pass and decoded output on Bruker TDF, TSF and miniTDF acquisitions is byte-identical.
+- Prepare the crate for crates.io: publishable manifest with an explicit file list, CI on Linux, macOS and Windows with MSRV, docs, `cargo deny` and packaging checks, and a tag-driven release workflow using crates.io Trusted Publishing.
 
 ## 0.1.1-rc.2, unpublished public release candidate
 

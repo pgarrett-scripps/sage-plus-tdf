@@ -1,0 +1,57 @@
+name: Bug report
+description: A file fails to open, decodes incorrectly, panics or uses too many resources.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not attach private acquisitions or patient data. For security problems, use private vulnerability reporting instead (see SECURITY.md).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, what you expected and what happened instead. Include the full error, with `Error::kind()` and `Error::contexts()` if available.
+    validations:
+      required: true
+  - type: dropdown
+    id: acquisition-type
+    attributes:
+      label: Acquisition type
+      options:
+        - TDF (timsTOF, analysis.tdf / analysis.tdf_bin)
+        - TSF (analysis.tsf / analysis.tsf_bin)
+        - miniTDF (ProteoScape ms2spectrum.parquet / ms2spectrum.bin)
+        - Other or unknown
+    validations:
+      required: true
+  - type: input
+    id: instrument
+    attributes:
+      label: Instrument and acquisition method
+      description: For example timsTOF Pro 2, ddaPASEF; timsTOF Ultra 2, diaPASEF; timsTOF fleX, MALDI.
+      placeholder: timsTOF Pro 2, ddaPASEF
+    validations:
+      required: true
+  - type: input
+    id: software
+    attributes:
+      label: Acquisition software version
+      description: timsControl or ProteoScape version, if known.
+  - type: input
+    id: version
+    attributes:
+      label: sage-plus-tdf version
+      description: Crate version or Git revision, and enabled features.
+      placeholder: 0.2.0, features = ["minitdf"]
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Operating system and Rust version
+      placeholder: Ubuntu 24.04, rustc 1.97.1
+  - type: textarea
+    id: data
+    attributes:
+      label: Data
+      description: Is the acquisition public (link it), or can you share a small synthetic reproducer? Note any non-default `Limits`.

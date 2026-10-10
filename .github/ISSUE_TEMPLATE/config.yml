@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/pgarrett-scripps/sage-plus-tdf/security/advisories/new
+    about: Report security problems privately, not as a public issue.

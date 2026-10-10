@@ -3,13 +3,25 @@ name = "sage-plus-tdf"
 version = "0.2.0"
 edition = "2024"
 rust-version = "1.97"
-publish = false
 readme = "README.md"
 license = "Apache-2.0 AND MIT"
-description = "Read-only pure Rust reader for Bruker TDF and TSF acquisitions and ProteoScape miniTDF spectra, used by Sage Plus"
+description = "Read-only pure Rust reader for Bruker timsTOF TDF and TSF acquisitions and ProteoScape miniTDF spectra"
 repository = "https://github.com/pgarrett-scripps/sage-plus-tdf"
-keywords = ["mass-spectrometry", "bruker", "tdf", "proteomics"]
+documentation = "https://docs.rs/sage-plus-tdf"
+keywords = ["mass-spectrometry", "bruker", "timstof", "tdf", "proteomics"]
 categories = ["science", "parser-implementations"]
+include = [
+    "/src/**",
+    "/tests/**",
+    "/examples/**",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/NOTICE.md",
+    "/LICENSE",
+    "/LICENSE-*",
+]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -17,11 +29,11 @@ default-target = "x86_64-unknown-linux-gnu"
 targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
-turso_core = { version = "=0.8.0-pre.13", default-features = false, features = ["fs", "uuid", "json", "pure-rust-crypto"] }
+turso_core = { version = "=0.8.2", default-features = false, features = ["fs", "uuid", "json", "pure-rust-crypto"] }
 ruzstd = "=0.9.0"
 lzf = "=1.0.0"
 thiserror = "2"
-parquet = { version = "59.2", default-features = false, features = ["snap", "zstd"], optional = true }
+parquet = { version = "60", default-features = false, features = ["snap", "zstd"], optional = true }
 
 [features]
 default = []

@@ -1,0 +1,154 @@
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  # Development toolchain; keep in sync with rust-toolchain.toml.
+  RUST_DEV: 1.97.1
+  # Minimum supported Rust version; keep in sync with rust-version in Cargo.toml.
+  RUST_MSRV: 1.97.0
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_DEV }}
+          components: rustfmt
+      - run: cargo fmt --all --check
+      - run: cargo fmt --all --check --manifest-path fuzz/Cargo.toml
+
+  clippy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_DEV }}
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - run: cargo clippy --locked --all-targets -- -D warnings
+
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_DEV }}
+      - uses: Swatinem/rust-cache@v2
+      # The default features must build without any C compiler.
+      - name: test default features (pure Rust)
+        run: cargo test --locked
+        env:
+          CC: prohibited-native-c-compiler
+          CXX: prohibited-native-cxx-compiler
+      # `minitdf` builds the C zstd library through parquet.
+      - name: test all features
+        run: cargo test --locked --all-features
+
+  msrv:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_MSRV }}
+      - uses: Swatinem/rust-cache@v2
+      # `+toolchain` overrides rust-toolchain.toml.
+      - run: cargo +${{ env.RUST_MSRV }} build --locked --all-features --lib
+
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_DEV }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo doc --locked --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  deny:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --locked
+
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_DEV }}
+      - uses: Swatinem/rust-cache@v2
+      - name: check packaged files
+        run: |
+          cargo package --locked --list > package-files.txt
+          cat package-files.txt
+          for required in LICENSE LICENSE-APACHE LICENSE-MIT-SAGE LICENSE-MIT-TDFPY NOTICE.md README.md CHANGELOG.md; do
+            grep -qx "$required" package-files.txt || { echo "missing $required from package"; exit 1; }
+          done
+          if grep -E '^(fuzz|scripts|\.github)/' package-files.txt; then
+            echo "development-only files in package"; exit 1
+          fi
+      - run: cargo publish --locked --dry-run
+      - name: check package size
+        run: |
+          crate="$(ls target/package/sage-plus-tdf-*.crate)"
+          size="$(stat -c %s "$crate")"
+          echo "$crate: $size bytes"
+          # crates.io rejects crates over 10 MB; keep far below it.
+          test "$size" -lt 2000000
+
+  fuzz-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      FUZZ_NIGHTLY: nightly-2026-09-25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.FUZZ_NIGHTLY }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+          cache-bin: true
+      - run: command -v cargo-fuzz || cargo +${{ env.FUZZ_NIGHTLY }} install cargo-fuzz --version 0.13.2 --locked
+      - run: cargo +${{ env.FUZZ_NIGHTLY }} fetch --locked --manifest-path fuzz/Cargo.toml
+      - run: cargo +${{ env.FUZZ_NIGHTLY }} fuzz build --dev
+      - run: cargo +${{ env.FUZZ_NIGHTLY }} fuzz run decoder --dev -- -max_total_time=30 -timeout=5 -rss_limit_mb=1024 -max_len=65536 -seed=20260926
+      - run: cargo +${{ env.FUZZ_NIGHTLY }} fuzz run schema_calibration --dev -- -max_total_time=30 -timeout=5 -rss_limit_mb=1024 -max_len=32768 -seed=20260926
+      - run: git diff --exit-code -- fuzz/Cargo.lock
