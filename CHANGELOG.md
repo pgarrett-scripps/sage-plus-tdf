@@ -5,6 +5,7 @@
 - Reject non-finite and negative intensities in TSF line spectra and miniTDF spectra as corrupt data, as the m/z arrays already were. A corrupt blob could previously deliver NaN intensities to the caller without an error.
 - Saturate the Zstandard decompression ceiling, so a `Limits` with `max_decompressed_bytes: usize::MAX` no longer panics in a debug build or rejects valid data in a release build.
 - Report a malformed `HasLineSpectra` value as corrupt data instead of as an absence of line spectra, so `TsfReader::read_line_spectrum` points at the real fault. A missing key is still `Unsupported`.
+- Document that `PasefFrameMsMsInfo::isolation_width` and `DiaFrameMsMsWindow::isolation_width` are full widths in m/z, as the TSF field already said, and pin the pass-through in a test.
 
 ## 0.2.0, 2026-10-10
 

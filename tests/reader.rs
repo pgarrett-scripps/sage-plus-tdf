@@ -507,6 +507,12 @@ fn typed_tables_follow_the_bruker_schema() {
         (42, 263, 288)
     );
     assert_eq!(pasef[0].precursor, Some(1));
+    // IsolationWidth is the full width in m/z and reaches the caller unhalved.
+    let raw = reader.metadata().table("PasefFrameMsMsInfo").unwrap();
+    assert_eq!(
+        raw[0].get("IsolationWidth").unwrap().as_f64(),
+        Some(pasef[0].isolation_width)
+    );
     let precursors = reader.precursors().unwrap();
     assert_eq!(precursors[0].charge, Some(2));
     assert_eq!(precursors[0].scan_number, Some(275.5991596638655));
@@ -526,6 +532,11 @@ fn typed_tables_follow_the_bruker_schema() {
     assert_eq!(
         (windows[0].scan_num_begin, windows[0].isolation_width),
         (125, 25.0)
+    );
+    let raw = reader.metadata().table("DiaFrameMsMsWindows").unwrap();
+    assert_eq!(
+        raw[0].get("IsolationWidth").unwrap().as_f64(),
+        Some(windows[0].isolation_width)
     );
     assert_eq!(
         reader.dia_frame_msms_window_groups().unwrap(),

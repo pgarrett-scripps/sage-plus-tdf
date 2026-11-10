@@ -67,6 +67,9 @@ pub struct PasefFrameMsMsInfo {
     pub scan_num_begin: u32,
     pub scan_num_end: u32,
     pub isolation_mz: f64,
+    /// Full isolation width, in m/z: the window is `isolation_mz` plus or minus
+    /// half of this, and the value is passed through from `IsolationWidth`
+    /// without being halved.
     pub isolation_width: f64,
     pub collision_energy: f64,
     pub precursor: Option<u64>,
@@ -101,6 +104,9 @@ pub struct DiaFrameMsMsWindow {
     pub scan_num_begin: u32,
     pub scan_num_end: u32,
     pub isolation_mz: f64,
+    /// Full isolation width, in m/z: the window is `isolation_mz` plus or minus
+    /// half of this, and the value is passed through from `IsolationWidth`
+    /// without being halved.
     pub isolation_width: f64,
     pub collision_energy: f64,
 }
