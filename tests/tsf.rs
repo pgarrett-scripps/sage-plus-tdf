@@ -185,6 +185,7 @@ fn reader_is_shareable_across_threads() {
 #[test]
 fn reads_real_tsf_run_when_available() {
     let Some(path) = std::env::var_os("SAGE_PLUS_TSF_URINE") else {
+        println!("skipped: SAGE_PLUS_TSF_URINE is not set");
         return;
     };
     let reader = TsfReader::open(path).unwrap();

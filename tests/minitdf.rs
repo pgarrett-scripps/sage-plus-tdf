@@ -103,6 +103,7 @@ fn rejects_corrupt_blobs_and_enforces_limits() {
 #[test]
 fn reads_real_minitdf_when_available() {
     let Some(path) = std::env::var_os("SAGE_PLUS_MINITDF_ZENODO") else {
+        println!("skipped: SAGE_PLUS_MINITDF_ZENODO is not set");
         return;
     };
     let reader = MiniTdfReader::open(path).unwrap();
