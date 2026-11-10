@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## 0.2.2, 2026-11-10
 
 - Raise `ruzstd` from the exact `=0.9.0` to `0.9.1`, which carries the fix for RUSTSEC-2026-0344, a Zstandard decompression bomb. This crate was already not exposed: it builds the decoder with `new_with_max_window_size(Limits::max_decompressed_bytes)` and reads at most that ceiling, so both the decoder's window and its output were bounded. The requirement still excludes 0.10.
 - Update the C Zstandard bindings that the `minitdf` feature pulls in through `parquet`: `zstd` 0.14.3, `zstd-safe` 8.2.0 and `zstd-sys` 2.1.2, for RUSTSEC-2026-0391, RUSTSEC-2026-0398 and RUSTSEC-2026-0403.
