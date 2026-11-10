@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 - Reject non-finite and negative intensities in TSF line spectra and miniTDF spectra as corrupt data, as the m/z arrays already were. A corrupt blob could previously deliver NaN intensities to the caller without an error.
+- Saturate the Zstandard decompression ceiling, so a `Limits` with `max_decompressed_bytes: usize::MAX` no longer panics in a debug build or rejects valid data in a release build.
 
 ## 0.2.0, 2026-10-10
 

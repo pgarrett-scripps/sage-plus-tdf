@@ -118,7 +118,7 @@ pub(crate) fn zstd(data: &[u8], max_bytes: usize, limits: Limits) -> Result<Vec<
     let mut decoded = Vec::new();
     decoder
         .by_ref()
-        .take(max_bytes as u64 + 1)
+        .take((max_bytes as u64).saturating_add(1))
         .read_to_end(&mut decoded)
         .map_err(|source| Error::Decoder {
             format: "Zstandard",
@@ -328,6 +328,15 @@ mod tests {
     #[test]
     fn truncated_lzf_table_returns_error() {
         assert!(decode(1, 1, &[], 1, 1, Limits::default()).is_err());
+    }
+    #[test]
+    fn an_unbounded_decompressed_ceiling_does_not_overflow() {
+        let compressed = include_bytes!("../tests/fixtures/checksum.zstd");
+        let limits = Limits {
+            max_decompressed_bytes: usize::MAX,
+            ..Limits::default()
+        };
+        assert_eq!(zstd(compressed, usize::MAX, limits).unwrap().len(), 36);
     }
     #[test]
     fn zstandard_checksum_trailing_bytes_and_truncations_are_rejected() {
