@@ -228,22 +228,7 @@ impl TsfReader {
                 "decoded line spectrum length disagrees with NumPeaks",
             ));
         }
-        let (indices, intensities) = decoded.split_at(peaks * 8);
-        let indices: Vec<f64> = indices
-            .as_chunks::<8>()
-            .0
-            .iter()
-            .map(|b| f64::from_le_bytes(*b))
-            .collect();
-        if indices.iter().any(|i| !i.is_finite() || *i < 0.0) {
-            return Err(invalid("invalid line spectrum index"));
-        }
-        let intensities = intensities
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .map(|b| f32::from_le_bytes(*b))
-            .collect();
+        let (indices, intensities) = line_spectrum_peaks(&decoded, peaks)?;
         Ok(LineSpectrum {
             frame_id: id,
             indices,
@@ -252,7 +237,70 @@ impl TsfReader {
     }
 }
 
+/// Split a decoded line spectrum into its two arrays: `peaks` little-endian
+/// f64 TOF indices followed by `peaks` little-endian f32 intensities. Every
+/// value must be finite and nonnegative, so a corrupt blob cannot reach a
+/// caller as a NaN index or intensity.
+fn line_spectrum_peaks(decoded: &[u8], peaks: usize) -> Result<(Vec<f64>, Vec<f32>)> {
+    if peaks.checked_mul(12) != Some(decoded.len()) {
+        return Err(invalid(
+            "decoded line spectrum length disagrees with NumPeaks",
+        ));
+    }
+    let (indices, intensities) = decoded.split_at(peaks * 8);
+    let indices: Vec<f64> = indices
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|b| f64::from_le_bytes(*b))
+        .collect();
+    if indices.iter().any(|i| !i.is_finite() || *i < 0.0) {
+        return Err(invalid("invalid line spectrum index"));
+    }
+    let intensities: Vec<f32> = intensities
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|b| f32::from_le_bytes(*b))
+        .collect();
+    if intensities.iter().any(|i| !i.is_finite() || *i < 0.0) {
+        return Err(invalid("invalid line spectrum intensity"));
+    }
+    Ok((indices, intensities))
+}
+
 const _: () = {
     const fn shareable<T: Send + Sync>() {}
     shareable::<TsfReader>();
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn blob(indices: &[f64], intensities: &[f32]) -> Vec<u8> {
+        let mut bytes: Vec<u8> = indices.iter().flat_map(|i| i.to_le_bytes()).collect();
+        bytes.extend(intensities.iter().flat_map(|i| i.to_le_bytes()));
+        bytes
+    }
+    #[test]
+    fn keeps_finite_nonnegative_peaks() {
+        let (indices, intensities) =
+            line_spectrum_peaks(&blob(&[0.0, 221.5], &[0.0, 250.5]), 2).unwrap();
+        assert_eq!(indices, [0.0, 221.5]);
+        assert_eq!(intensities, [0.0, 250.5]);
+    }
+    #[test]
+    fn rejects_nonfinite_or_negative_intensities() {
+        for intensities in [[1.0, f32::NAN], [1.0, f32::INFINITY], [1.0, -1.0]] {
+            let error = line_spectrum_peaks(&blob(&[1.0, 2.0], &intensities), 2).unwrap_err();
+            assert_eq!(error.kind(), crate::ErrorKind::CorruptData);
+        }
+    }
+    #[test]
+    fn rejects_nonfinite_or_negative_indices_and_wrong_lengths() {
+        for indices in [[1.0, f64::NAN], [1.0, f64::NEG_INFINITY], [1.0, -1.0]] {
+            assert!(line_spectrum_peaks(&blob(&indices, &[1.0, 2.0]), 2).is_err());
+        }
+        assert!(line_spectrum_peaks(&blob(&[1.0], &[1.0]), 2).is_err());
+    }
+}

@@ -232,31 +232,46 @@ impl MiniTdfReader {
         if decoded.len() != expected {
             return Err(invalid("decoded spectrum length disagrees with peak count"));
         }
-        // Byte-transposed u32 words: byte k of word i is at k * words + i.
-        let words = peaks * 3;
-        let word = |i: usize| {
-            u32::from_le_bytes([
-                decoded[i],
-                decoded[words + i],
-                decoded[2 * words + i],
-                decoded[3 * words + i],
-            ])
-        };
-        let mz: Vec<f64> = (0..peaks)
-            .map(|i| f64::from_bits(u64::from(word(2 * i)) | (u64::from(word(2 * i + 1)) << 32)))
-            .collect();
-        if mz.iter().any(|mz| !mz.is_finite() || *mz <= 0.0) {
-            return Err(invalid("invalid spectrum m/z"));
-        }
-        let intensities = (0..peaks)
-            .map(|i| f32::from_bits(word(2 * peaks + i)))
-            .collect();
+        let (mz, intensities) = spectrum_peaks(&decoded, peaks)?;
         Ok(MiniTdfSpectrum {
             index,
             mz,
             intensities,
         })
     }
+}
+
+/// Decode a spectrum blob: byte-transposed u32 words holding `peaks` f64 m/z
+/// values followed by `peaks` f32 intensities, where byte `k` of word `i` is at
+/// `k * words + i`. Every value must be finite, the m/z positive and the
+/// intensities nonnegative, so a corrupt blob cannot reach a caller as a NaN
+/// m/z or intensity.
+fn spectrum_peaks(decoded: &[u8], peaks: usize) -> Result<(Vec<f64>, Vec<f32>)> {
+    if peaks.checked_mul(12) != Some(decoded.len()) {
+        return Err(invalid("decoded spectrum length disagrees with peak count"));
+    }
+    let words = peaks * 3;
+    let word = |i: usize| {
+        u32::from_le_bytes([
+            decoded[i],
+            decoded[words + i],
+            decoded[2 * words + i],
+            decoded[3 * words + i],
+        ])
+    };
+    let mz: Vec<f64> = (0..peaks)
+        .map(|i| f64::from_bits(u64::from(word(2 * i)) | (u64::from(word(2 * i + 1)) << 32)))
+        .collect();
+    if mz.iter().any(|mz| !mz.is_finite() || *mz <= 0.0) {
+        return Err(invalid("invalid spectrum m/z"));
+    }
+    let intensities: Vec<f32> = (0..peaks)
+        .map(|i| f32::from_bits(word(2 * peaks + i)))
+        .collect();
+    if intensities.iter().any(|i| !i.is_finite() || *i < 0.0) {
+        return Err(invalid("invalid spectrum intensity"));
+    }
+    Ok((mz, intensities))
 }
 
 fn parquet_error(error: parquet::errors::ParquetError) -> Error {
@@ -389,3 +404,40 @@ const _: () = {
     const fn shareable<T: Send + Sync>() {}
     shareable::<MiniTdfReader>();
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn blob(mz: &[f64], intensities: &[f32]) -> Vec<u8> {
+        let mut words: Vec<u32> = Vec::new();
+        for value in mz {
+            let bits = value.to_bits();
+            words.push(bits as u32);
+            words.push((bits >> 32) as u32);
+        }
+        words.extend(intensities.iter().map(|i| i.to_bits()));
+        (0..4)
+            .flat_map(|b| words.iter().map(move |w| w.to_le_bytes()[b]))
+            .collect()
+    }
+    #[test]
+    fn keeps_finite_positive_mz_and_nonnegative_intensities() {
+        let (mz, intensities) = spectrum_peaks(&blob(&[100.0, 200.002], &[0.0, 2.0]), 2).unwrap();
+        assert_eq!(mz, [100.0, 200.002]);
+        assert_eq!(intensities, [0.0, 2.0]);
+    }
+    #[test]
+    fn rejects_nonfinite_or_negative_intensities() {
+        for intensities in [[1.0, f32::NAN], [1.0, f32::INFINITY], [1.0, -1.0]] {
+            let error = spectrum_peaks(&blob(&[100.0, 200.0], &intensities), 2).unwrap_err();
+            assert_eq!(error.kind(), crate::ErrorKind::CorruptData);
+        }
+    }
+    #[test]
+    fn rejects_nonpositive_mz_and_wrong_lengths() {
+        for mz in [[100.0, f64::NAN], [100.0, 0.0], [100.0, -1.0]] {
+            assert!(spectrum_peaks(&blob(&mz, &[1.0, 2.0]), 2).is_err());
+        }
+        assert!(spectrum_peaks(&blob(&[100.0], &[1.0]), 2).is_err());
+    }
+}

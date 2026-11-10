@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- Reject non-finite and negative intensities in TSF line spectra and miniTDF spectra as corrupt data, as the m/z arrays already were. A corrupt blob could previously deliver NaN intensities to the caller without an error.
+
 ## 0.2.0, 2026-10-10
 
 First crates.io release.
