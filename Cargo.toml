@@ -30,7 +30,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
 turso_core = { version = "=0.8.2", default-features = false, features = ["fs", "uuid", "json", "pure-rust-crypto"] }
-ruzstd = "=0.9.0"
+ruzstd = "0.9.1"
 lzf = "=1.0.0"
 thiserror = "2"
 parquet = { version = "60", default-features = false, features = ["snap", "zstd"], optional = true }
