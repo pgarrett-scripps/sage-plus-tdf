@@ -7,6 +7,7 @@
 - Report a malformed `HasLineSpectra` value as corrupt data instead of as an absence of line spectra, so `TsfReader::read_line_spectrum` points at the real fault. A missing key is still `Unsupported`.
 - Document that `PasefFrameMsMsInfo::isolation_width` and `DiaFrameMsMsWindow::isolation_width` are full widths in m/z, as the TSF field already said, and pin the pass-through in a test.
 - Print which environment variable is missing when a real-data test skips, so a green run no longer hides that `SAGE_PLUS_TSF_URINE` or `SAGE_PLUS_MINITDF_ZENODO` was unset.
+- Add `UPSTREAM.md`, which records the merge base and which upstream releases have been reviewed. timsrust 0.6.7 was reviewed on 2026-11-09 and does not apply: its fixes are in the centroid spectrum reader, a layer this fork does not have.
 
 ## 0.2.0, 2026-10-10
 

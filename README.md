@@ -9,7 +9,7 @@ Fork of MannLabs timsrust by Sander Willems and contributors; not affiliated wit
 
 A read-only, pure Rust reader for Bruker TDF and TSF `.d` directories and ProteoScape miniTDF spectra, used by [Sage Plus](https://github.com/pgarrett-scripps/sage-plus). It reads the file and nothing else: frames, calibration, metadata and typed tables. Summing, smoothing, centroiding and window splitting belong to the application.
 
-Derived from MannLabs timsrust 0.6.6 at `80e235a`, with upstream history retained.
+Derived from MannLabs timsrust 0.6.6 at `80e235a`, with upstream history retained. `UPSTREAM.md` records which upstream releases have been reviewed and whether they apply.
 
 ## What it reads
 
