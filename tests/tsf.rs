@@ -145,6 +145,29 @@ fn enforces_limits_and_line_spectra_flag() {
 }
 
 #[test]
+fn reports_a_malformed_line_spectra_flag_as_corrupt_data() {
+    let dir = tempfile::tempdir().unwrap();
+    copy(dir.path());
+    // Overwrite the stored value of HasLineSpectra, keeping its length.
+    let path = dir.path().join("analysis.tsf");
+    let mut bytes = std::fs::read(&path).unwrap();
+    let row = b"HasLineSpectra1";
+    let at = bytes
+        .windows(row.len())
+        .position(|w| w == row)
+        .expect("flag value");
+    bytes[at + row.len() - 1] = b'x';
+    std::fs::write(&path, bytes).unwrap();
+
+    let reader = TsfReader::open(dir.path()).unwrap();
+    assert!(!reader.has_line_spectra());
+    assert_eq!(
+        reader.read_line_spectrum(1).unwrap_err().kind(),
+        ErrorKind::CorruptData
+    );
+}
+
+#[test]
 fn reader_is_shareable_across_threads() {
     let reader = TsfReader::open(fixture()).unwrap();
     std::thread::scope(|scope| {

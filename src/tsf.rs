@@ -77,9 +77,19 @@ impl TsfReader {
     pub fn global_metadata(&self) -> &GlobalMetadata {
         &self.global
     }
-    /// GlobalMetadata `HasLineSpectra` is 1.
+    /// GlobalMetadata `HasLineSpectra` is 1. A missing or malformed value reads
+    /// as `false`; [`Self::read_line_spectrum`] tells the two apart.
     pub fn has_line_spectra(&self) -> bool {
-        self.global.integer("HasLineSpectra").ok() == Some(1)
+        self.line_spectra_flag().unwrap_or(false)
+    }
+
+    /// `HasLineSpectra` as recorded: an absent key is `false`, a value that is
+    /// not an integer is corrupt data rather than an absence of line spectra.
+    fn line_spectra_flag(&self) -> Result<bool> {
+        if self.global.get("HasLineSpectra").is_none() {
+            return Ok(false);
+        }
+        Ok(self.global.integer("HasLineSpectra")? == 1)
     }
     /// Sorted by the original identifier.
     pub fn frames(&self) -> impl Iterator<Item = &TsfFrameInfo> {
@@ -155,7 +165,7 @@ impl TsfReader {
     }
 
     fn read_line_inner(&self, id: u64) -> Result<LineSpectrum> {
-        if !self.has_line_spectra() {
+        if !self.line_spectra_flag()? {
             return Err(Error::Unsupported(
                 "TSF without line spectra (HasLineSpectra is not 1)".into(),
             ));
