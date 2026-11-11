@@ -179,18 +179,32 @@ impl TdfReader {
     }
 
     pub fn read_frame(&self, id: u64) -> Result<Frame> {
-        let offset = self.frames.get(&id).map(|frame| frame.binary_offset);
-        self.read_frame_inner(id).map_err(|error| {
-            error.with_context(ErrorContext {
-                path: Some(self.directory.join("analysis.tdf_bin")),
-                frame_id: Some(id),
-                byte_offset: offset,
-                ..Default::default()
-            })
-        })
+        let mut data = Vec::new();
+        let mut frame = Frame::default();
+        self.read_frame_into(id, &mut data, &mut frame)?;
+        Ok(frame)
     }
 
-    fn read_frame_inner(&self, id: u64) -> Result<Frame> {
+    /// Read a frame into buffers the caller keeps. `data` takes the compressed
+    /// bytes and `frame` the decoded coordinates; both are cleared first and
+    /// keep their capacity, so reading many frames in a loop allocates once
+    /// instead of per frame. Decoding and every limit are those of
+    /// [`read_frame`](Self::read_frame). On error both buffers hold partial
+    /// data and must not be read.
+    pub fn read_frame_into(&self, id: u64, data: &mut Vec<u8>, frame: &mut Frame) -> Result<()> {
+        let offset = self.frames.get(&id).map(|info| info.binary_offset);
+        self.read_frame_into_inner(id, data, frame)
+            .map_err(|error| {
+                error.with_context(ErrorContext {
+                    path: Some(self.directory.join("analysis.tdf_bin")),
+                    frame_id: Some(id),
+                    byte_offset: offset,
+                    ..Default::default()
+                })
+            })
+    }
+
+    fn read_frame_into_inner(&self, id: u64, data: &mut Vec<u8>, frame: &mut Frame) -> Result<()> {
         let info = self
             .frames
             .get(&id)
@@ -245,17 +259,18 @@ impl TdfReader {
                 "frame_size",
             ));
         }
-        let mut data = vec![0u8; bytes - 8];
-        read_exact_at(&self.binary, &mut data, info.binary_offset + 8)?;
-        let frame = compression::decode(
+        data.clear();
+        data.resize(bytes - 8, 0);
+        read_exact_at(&self.binary, data, info.binary_offset + 8)?;
+        compression::decode_into(
             self.compression,
             id,
-            &data,
+            data,
             scans,
             info.peak_count,
             self.limits,
-        )?;
-        Ok(frame)
+            frame,
+        )
     }
 
     /// Read the exact per-frame model. Missing references never fall back to another frame.

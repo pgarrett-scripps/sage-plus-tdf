@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Add `TdfReader::read_frame_into`, which decodes a frame into a `Vec<u8>` and a `Frame` the caller keeps, instead of allocating a compressed-byte buffer and three frame vectors per frame. `read_frame` is unchanged and now calls it. `Frame` implements `Default`, so a caller can make the empty frame to fill.
 - Cache the schema object list in `MetadataDatabase`, so opening an acquisition and reading its typed tables issues one `sqlite_master` query instead of two or three per typed table. The list cannot change while the database is open: the file is opened read-only and an active SQLite journal is already rejected.
 
 ## 0.2.2, 2026-11-10

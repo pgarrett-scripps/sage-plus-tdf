@@ -17,14 +17,17 @@ pub(crate) fn word(data: &[u8], offset: usize) -> Result<u32> {
     ))
 }
 
-pub(crate) fn decode(
+/// Decode into an existing frame, reusing its three buffers. On error the
+/// frame holds whatever had been decoded so far and must not be read.
+pub(crate) fn decode_into(
     kind: u32,
     id: u64,
     data: &[u8],
     scans: usize,
     peaks: usize,
     limits: Limits,
-) -> Result<Frame> {
+    frame: &mut Frame,
+) -> Result<()> {
     if scans > limits.max_scans {
         return Err(limit("scans", limits.max_scans, scans));
     }
@@ -45,15 +48,16 @@ pub(crate) fn decode(
             minimum_bytes,
         ));
     }
-    let mut frame = Frame {
-        id,
-        scan_offsets: vec![0],
-        tof_indices: Vec::with_capacity(peaks),
-        intensities: Vec::with_capacity(peaks),
-    };
+    frame.id = id;
+    frame.scan_offsets.clear();
+    frame.tof_indices.clear();
+    frame.intensities.clear();
+    frame.scan_offsets.push(0);
+    frame.tof_indices.reserve(peaks);
+    frame.intensities.reserve(peaks);
     match kind {
-        2 => decode_v2(data, scans, peaks, limits, &mut frame)?,
-        1 => decode_v1(data, scans, peaks, limits, &mut frame)?,
+        2 => decode_v2(data, scans, peaks, limits, frame)?,
+        1 => decode_v1(data, scans, peaks, limits, frame)?,
         _ => return Err(invalid("unsupported compression")),
     }
     if frame.tof_indices.len() != peaks
@@ -62,7 +66,7 @@ pub(crate) fn decode(
     {
         return Err(invalid("decoded counts disagree with Frames metadata"));
     }
-    Ok(frame)
+    Ok(())
 }
 
 fn decode_v2(
@@ -291,6 +295,19 @@ fn decode_v1(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn decode(
+        kind: u32,
+        id: u64,
+        data: &[u8],
+        scans: usize,
+        peaks: usize,
+        limits: Limits,
+    ) -> Result<Frame> {
+        let mut frame = Frame::default();
+        decode_into(kind, id, data, scans, peaks, limits, &mut frame)?;
+        Ok(frame)
+    }
     fn shuffled(words: &[u32]) -> Vec<u8> {
         (0..4)
             .flat_map(|b| words.iter().map(move |w| w.to_le_bytes()[b]))

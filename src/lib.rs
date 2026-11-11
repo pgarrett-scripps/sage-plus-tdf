@@ -85,7 +85,8 @@ impl Default for Limits {
 }
 
 /// Original raw coordinates and counts. Intensities are not rescaled.
-#[derive(Debug, PartialEq, Eq)]
+/// `Default` gives the empty frame a buffer-reusing reader fills.
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct Frame {
     pub id: u64,
     pub scan_offsets: Vec<usize>,

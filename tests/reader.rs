@@ -1,5 +1,5 @@
 use sage_plus_tdf::{
-    Limits, MetadataDatabase, MobilityModel, MzCalibration, MzModel, SqlValue, TdfReader,
+    Frame, Limits, MetadataDatabase, MobilityModel, MzCalibration, MzModel, SqlValue, TdfReader,
 };
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
@@ -582,4 +582,33 @@ fn linear_scales_reproduce_timsrust_converters() {
     assert_eq!(mobility.one_over_k0(0.0), 1.6);
     assert!((mobility.one_over_k0(2.0) - 0.6).abs() < 1e-12);
     assert!((mobility.scan_number(1.1) - 1.0).abs() < 1e-12);
+}
+
+#[test]
+fn read_frame_into_reuses_buffers_and_matches_read_frame() {
+    let reader = TdfReader::open(fixture()).unwrap();
+    let mut data = Vec::new();
+    let mut frame = Frame::default();
+    reader.read_frame_into(10, &mut data, &mut frame).unwrap();
+    let capacities = (data.capacity(), frame.tof_indices.capacity());
+    assert!(capacities.0 > 0 && capacities.1 > 0);
+    for _ in 0..3 {
+        reader.read_frame_into(10, &mut data, &mut frame).unwrap();
+        assert_eq!(frame, reader.read_frame(10).unwrap());
+        // Re-reading a frame reuses the buffers instead of allocating again.
+        assert_eq!((data.capacity(), frame.tof_indices.capacity()), capacities);
+    }
+    for id in [42, 10] {
+        reader.read_frame_into(id, &mut data, &mut frame).unwrap();
+        assert_eq!(frame, reader.read_frame(id).unwrap());
+    }
+    // A failed read leaves both buffers usable for the next frame.
+    assert!(reader.read_frame_into(1, &mut data, &mut frame).is_err());
+    reader.read_frame_into(42, &mut data, &mut frame).unwrap();
+    assert_eq!(frame, reader.read_frame(42).unwrap());
+    // LZF frames decode through the same buffers.
+    let lzf = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/lzf.d");
+    let lzf = TdfReader::open(lzf).unwrap();
+    lzf.read_frame_into(10, &mut data, &mut frame).unwrap();
+    assert_eq!(frame, lzf.read_frame(10).unwrap());
 }
