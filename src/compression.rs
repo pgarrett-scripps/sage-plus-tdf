@@ -166,18 +166,33 @@ fn decode_v2_bytes(bytes: &[u8], scans: usize, peaks: usize, frame: &mut Frame) 
     if scans == 0 {
         return Ok(());
     }
-    let at = |i: usize| -> Result<u32> {
-        if i >= words {
-            return Err(invalid("invalid shuffled word offset"));
-        }
-        Ok(u32::from_le_bytes([
-            bytes[i],
-            bytes[i + words],
-            bytes[i + 2 * words],
-            bytes[i + 3 * words],
-        ]))
-    };
-    if at(0)? as usize != scans {
+    // Byte-transposed layout: the four bytes of word `i` are the `i`-th byte of
+    // four equal planes. Splitting the planes once, and the scan table off the
+    // peak pairs, gives the same words as indexing each byte separately. The
+    // first `scans` words are the scan table and the rest are (TOF delta,
+    // intensity) pairs read in order, so the peaks need no index arithmetic.
+    let (plane0, rest) = bytes.split_at(words);
+    let (plane1, rest) = rest.split_at(words);
+    let (plane2, plane3) = rest.split_at(words);
+    let (table0, peaks0) = plane0.split_at(scans);
+    let (table1, peaks1) = plane1.split_at(scans);
+    let (table2, peaks2) = plane2.split_at(scans);
+    let (table3, peaks3) = plane3.split_at(scans);
+    let scan_word = |i: usize| u32::from_le_bytes([table0[i], table1[i], table2[i], table3[i]]);
+    let mut pairs = peaks0
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(peaks1.as_chunks::<2>().0)
+        .zip(peaks2.as_chunks::<2>().0)
+        .zip(peaks3.as_chunks::<2>().0)
+        .map(|(((b0, b1), b2), b3)| {
+            (
+                u32::from_le_bytes([b0[0], b1[0], b2[0], b3[0]]),
+                u32::from_le_bytes([b0[1], b1[1], b2[1], b3[1]]),
+            )
+        });
+    if scan_word(0) as usize != scans {
         return Err(invalid("decoded scan count mismatch"));
     }
     let mut offset = 0usize;
@@ -185,7 +200,7 @@ fn decode_v2_bytes(bytes: &[u8], scans: usize, peaks: usize, frame: &mut Frame) 
         let end = if scan + 1 == scans {
             peaks
         } else {
-            let doubled = at(scan + 1)?;
+            let doubled = scan_word(scan + 1);
             if doubled % 2 != 0 {
                 return Err(invalid("odd scan peak count"));
             }
@@ -197,8 +212,10 @@ fn decode_v2_bytes(bytes: &[u8], scans: usize, peaks: usize, frame: &mut Frame) 
             return Err(invalid("scan peak count exceeds frame"));
         }
         let mut tof = 0u32;
-        for peak in offset..end {
-            let delta = at(scans + 2 * peak)?;
+        for _ in offset..end {
+            let (delta, intensity) = pairs
+                .next()
+                .ok_or_else(|| invalid("truncated peak words"))?;
             tof = tof
                 .checked_add(delta)
                 .ok_or_else(|| invalid("TOF accumulation overflow"))?;
@@ -206,7 +223,7 @@ fn decode_v2_bytes(bytes: &[u8], scans: usize, peaks: usize, frame: &mut Frame) 
                 tof.checked_sub(1)
                     .ok_or_else(|| invalid("zero TOF coordinate"))?,
             );
-            frame.intensities.push(at(scans + 2 * peak + 1)?);
+            frame.intensities.push(intensity);
         }
         frame.scan_offsets.push(end);
         offset = end;
@@ -313,6 +330,151 @@ mod tests {
             .flat_map(|b| words.iter().map(move |w| w.to_le_bytes()[b]))
             .collect()
     }
+    /// The indexed decoder this module used before the four byte planes were
+    /// split once: every word came from four bounds-checked byte lookups
+    /// behind a closure. Kept to pin that the planes decode identically.
+    fn reference_v2_bytes(
+        bytes: &[u8],
+        scans: usize,
+        peaks: usize,
+        frame: &mut Frame,
+    ) -> Result<()> {
+        let words = scans
+            .checked_add(
+                peaks
+                    .checked_mul(2)
+                    .ok_or_else(|| invalid("peak overflow"))?,
+            )
+            .ok_or_else(|| invalid("word overflow"))?;
+        if bytes.len()
+            != words
+                .checked_mul(4)
+                .ok_or_else(|| invalid("size overflow"))?
+        {
+            return Err(invalid("decoded byte count disagrees with frame metadata"));
+        }
+        if scans == 0 {
+            return Ok(());
+        }
+        let at = |i: usize| -> Result<u32> {
+            if i >= words {
+                return Err(invalid("invalid shuffled word offset"));
+            }
+            Ok(u32::from_le_bytes([
+                bytes[i],
+                bytes[i + words],
+                bytes[i + 2 * words],
+                bytes[i + 3 * words],
+            ]))
+        };
+        if at(0)? as usize != scans {
+            return Err(invalid("decoded scan count mismatch"));
+        }
+        let mut offset = 0usize;
+        for scan in 0..scans {
+            let end = if scan + 1 == scans {
+                peaks
+            } else {
+                let doubled = at(scan + 1)?;
+                if doubled % 2 != 0 {
+                    return Err(invalid("odd scan peak count"));
+                }
+                offset
+                    .checked_add(doubled as usize / 2)
+                    .ok_or_else(|| invalid("scan offset overflow"))?
+            };
+            if end < offset || end > peaks {
+                return Err(invalid("scan peak count exceeds frame"));
+            }
+            let mut tof = 0u32;
+            for peak in offset..end {
+                let delta = at(scans + 2 * peak)?;
+                tof = tof
+                    .checked_add(delta)
+                    .ok_or_else(|| invalid("TOF accumulation overflow"))?;
+                frame.tof_indices.push(
+                    tof.checked_sub(1)
+                        .ok_or_else(|| invalid("zero TOF coordinate"))?,
+                );
+                frame.intensities.push(at(scans + 2 * peak + 1)?);
+            }
+            frame.scan_offsets.push(end);
+            offset = end;
+        }
+        Ok(())
+    }
+
+    /// One well-formed Zstandard-layer frame: the scan table, then the
+    /// (TOF delta, intensity) pairs in scan order.
+    fn v2_words(scan_counts: &[usize], deltas: &[u32], intensities: &[u32]) -> Vec<u32> {
+        let scans = scan_counts.len();
+        let mut words = vec![scans as u32];
+        for count in &scan_counts[..scans - 1] {
+            words.push(2 * *count as u32);
+        }
+        for (delta, intensity) in deltas.iter().zip(intensities) {
+            words.push(*delta);
+            words.push(*intensity);
+        }
+        words
+    }
+
+    #[test]
+    fn split_planes_decode_exactly_as_the_indexed_words_did() {
+        let mut state = 0x2026_1110_u64;
+        let mut next = move || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (state >> 33) as u32
+        };
+        let mut cases: Vec<(Vec<u8>, usize, usize)> = Vec::new();
+        // Well-formed frames, including empty scans and a single-peak frame.
+        for scan_counts in [
+            vec![0usize],
+            vec![1],
+            vec![0, 2, 1],
+            vec![3, 0, 0, 4],
+            vec![7, 1, 2, 0, 5, 9],
+        ] {
+            let peaks: usize = scan_counts.iter().sum();
+            let deltas: Vec<u32> = (0..peaks).map(|_| 1 + next() % 1000).collect();
+            let intensities: Vec<u32> = (0..peaks).map(|_| next() % 10_000).collect();
+            let words = v2_words(&scan_counts, &deltas, &intensities);
+            cases.push((shuffled(&words), scan_counts.len(), peaks));
+        }
+        // Malformed frames: random words, truncations and wrong counts, so the
+        // error paths are compared too.
+        for case in 0..400 {
+            let scans = 1 + case % 5;
+            let peaks = case % 4;
+            let words: Vec<u32> = (0..scans + 2 * peaks).map(|_| next()).collect();
+            let bytes = shuffled(&words);
+            cases.push((bytes.clone(), scans, peaks));
+            cases.push((
+                bytes[..bytes.len().saturating_sub(4)].to_vec(),
+                scans,
+                peaks,
+            ));
+            cases.push((bytes, scans + 1, peaks));
+        }
+        for (bytes, scans, peaks) in cases {
+            let mut split = empty();
+            let mut reference = empty();
+            let split_result = decode_v2_bytes(&bytes, scans, peaks, &mut split);
+            let reference_result = reference_v2_bytes(&bytes, scans, peaks, &mut reference);
+            match (split_result, reference_result) {
+                (Ok(()), Ok(())) => assert_eq!(split, reference),
+                (Err(split), Err(reference)) => {
+                    assert_eq!(split.to_string(), reference.to_string())
+                }
+                (split, reference) => {
+                    panic!("{scans} scans, {peaks} peaks: {split:?} vs {reference:?}")
+                }
+            }
+        }
+    }
+
     fn empty() -> Frame {
         Frame {
             id: 1,
