@@ -120,6 +120,11 @@ fn active_journal_is_rejected() {
 fn lzf_frames_retain_empty_scans_and_reject_corrupt_offsets() {
     let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/lzf.d");
     let reader = TdfReader::open(&source).unwrap();
+    // No MsMsType 8 or 9 frame, so the acquisition type stays unknown.
+    assert_eq!(
+        reader.acquisition_type(),
+        sage_plus_tdf::AcquisitionType::Unknown
+    );
     let frame = reader.read_frame(10).unwrap();
     assert_eq!(frame.scan_offsets, [0, 2, 2]);
     assert_eq!(frame.tof_indices, [4, 5]);

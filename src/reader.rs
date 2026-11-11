@@ -103,10 +103,18 @@ impl TdfReader {
     pub fn compression_type(&self) -> u32 {
         self.compression
     }
+    /// One pass: any `MsMsType` 8 frame makes the acquisition DDA-PASEF, as
+    /// two passes over the frames decided before.
     pub fn acquisition_type(&self) -> AcquisitionType {
-        if self.frames.values().any(|f| f.msms_type == 8) {
-            AcquisitionType::DdaPasef
-        } else if self.frames.values().any(|f| f.msms_type == 9) {
+        let mut dia = false;
+        for frame in self.frames.values() {
+            match frame.msms_type {
+                8 => return AcquisitionType::DdaPasef,
+                9 => dia = true,
+                _ => {}
+            }
+        }
+        if dia {
             AcquisitionType::DiaPasef
         } else {
             AcquisitionType::Unknown
