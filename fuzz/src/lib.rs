@@ -45,14 +45,20 @@ pub fn decoder(data: &[u8]) {
         max_decompressed_bytes: 32_768,
         ..Default::default()
     };
-    let _ = compression::decode(
-        1 + u32::from(data[0] & 1),
-        1,
-        &data[5..],
-        scans,
-        peaks,
-        limits,
-    );
+    // Twice into one frame, so a decode that follows a partial or failed one
+    // fuzzes the buffer reuse in `decode_into` as well as the decoders.
+    let mut frame = Frame::default();
+    for id in 1..=2 {
+        let _ = compression::decode_into(
+            1 + u32::from(data[0] & 1),
+            id,
+            &data[5..],
+            scans,
+            peaks,
+            limits,
+            &mut frame,
+        );
+    }
 }
 
 pub fn schema_calibration(data: &[u8]) {
