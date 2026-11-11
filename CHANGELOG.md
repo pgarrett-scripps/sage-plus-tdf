@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- Cache the schema object list in `MetadataDatabase`, so opening an acquisition and reading its typed tables issues one `sqlite_master` query instead of two or three per typed table. The list cannot change while the database is open: the file is opened read-only and an active SQLite journal is already rejected.
+
 ## 0.2.2, 2026-11-10
 
 - Raise `ruzstd` from the exact `=0.9.0` to `0.9.1`, which carries the fix for RUSTSEC-2026-0344, a Zstandard decompression bomb. This crate was already not exposed: it builds the decoder with `new_with_max_window_size(Limits::max_decompressed_bytes)` and reads at most that ceiling, so both the decoder's window and its output were bounded. The requirement still excludes 0.10.

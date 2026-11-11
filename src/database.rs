@@ -2,7 +2,7 @@ use crate::{Error, ErrorContext, Result, invalid, limit};
 use std::{
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
@@ -140,6 +140,11 @@ pub struct MetadataDatabase {
     limits: MetadataLimits,
     query_lock: Mutex<()>,
     path: PathBuf,
+    /// Schema objects of a completed acquisition opened read-only, so the list
+    /// cannot change while this database is open. Queried at most once.
+    table_cache: OnceLock<Vec<String>>,
+    /// Number of `sqlite_master` queries actually issued; asserted by tests.
+    schema_queries: AtomicU64,
 }
 fn db_error(error: turso_core::LimboError) -> Error {
     Error::DatabaseSource(Box::new(error))
@@ -189,11 +194,24 @@ impl MetadataDatabase {
             limits,
             query_lock: Mutex::new(()),
             path: path.to_path_buf(),
+            table_cache: OnceLock::new(),
+            schema_queries: AtomicU64::new(0),
         })
     }
 
     pub fn tables(&self) -> Result<Vec<String>> {
-        self.query("SELECT name FROM sqlite_master WHERE type IN ('table', 'view') ORDER BY name")?
+        self.table_names().map(<[String]>::to_vec)
+    }
+
+    /// The cached schema object list, queried on first use. A failed query is
+    /// not cached, so a later call retries it.
+    fn table_names(&self) -> Result<&[String]> {
+        if let Some(names) = self.table_cache.get() {
+            return Ok(names);
+        }
+        self.schema_queries.fetch_add(1, Ordering::Relaxed);
+        let names = self
+            .query("SELECT name FROM sqlite_master WHERE type IN ('table', 'view') ORDER BY name")?
             .into_iter()
             .map(|r| {
                 r.get("name")
@@ -201,12 +219,16 @@ impl MetadataDatabase {
                     .map(str::to_owned)
                     .ok_or_else(|| invalid("invalid schema object name"))
             })
-            .collect()
+            .collect::<Result<Vec<String>>>()?;
+        Ok(self.table_cache.get_or_init(|| names))
     }
 
     /// Whether a table or view of this name exists, ignoring ASCII case.
     pub fn has_table(&self, name: &str) -> Result<bool> {
-        Ok(self.tables()?.iter().any(|s| s.eq_ignore_ascii_case(name)))
+        Ok(self
+            .table_names()?
+            .iter()
+            .any(|s| s.eq_ignore_ascii_case(name)))
     }
 
     /// Preserve all source columns, including vendor extensions and metadata views.
@@ -222,8 +244,8 @@ impl MetadataDatabase {
 
     fn table_inner(&self, name: &str) -> Result<Vec<MetadataRow>> {
         let actual = self
-            .tables()?
-            .into_iter()
+            .table_names()?
+            .iter()
             .find(|s| s.eq_ignore_ascii_case(name))
             .ok_or_else(|| invalid(format!("missing metadata table or view {name}")))?;
         self.query(&format!(
@@ -383,5 +405,26 @@ impl MetadataDatabase {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reading_every_table_issues_one_schema_query() {
+        let path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tables.d/analysis.tdf");
+        let database = MetadataDatabase::open(path).unwrap();
+        let names = database.tables().unwrap();
+        assert!(names.len() > 1, "fixture holds several schema objects");
+        for name in &names {
+            assert!(database.has_table(name).unwrap());
+            assert!(database.has_table(&name.to_ascii_uppercase()).unwrap());
+            database.table(name).unwrap();
+        }
+        assert_eq!(names, database.tables().unwrap());
+        assert_eq!(database.schema_queries.load(Ordering::Relaxed), 1);
     }
 }
