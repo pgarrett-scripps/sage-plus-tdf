@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- The miniTDF real-data test pins the peak total it decodes from Zenodo record 10908040, 1,897,058 over 2,467 spectra, instead of printing it. Its TSF counterpart already pinned 70,265, so a decoder change that halved every miniTDF spectrum would have passed.
 - Test the ModelType 2 mobility model the way the m/z model is tested: `MobilityModel::scan_number` is asserted to invert `one_over_k0` inside the C8 to C9 window and across both linear continuations, `one_over_k0` to decrease strictly over 40,000 scans, and the non-finite, degenerate and unusable-coefficient paths to be reported as corrupt data. `src/mobility.rs` had no test module. No source line changed.
 - Fuzz the TSF line spectrum and miniTDF spectrum blob parsers. Both moved into their own files (`src/tsf_blob.rs`, `src/minitdf_blob.rs`), so the harness compiles them without `analysis.tsf`, `parquet` or a `File`, and a `spectrum_blobs` target runs them against the same input with reused buffers, asserting that an accepted blob yields exactly `peaks` finite values. Nothing a caller sees changed.
 - Add `TsfReader::read_line_spectrum_into` and `MiniTdfReader::read_spectrum_into`, which decode into a `Vec<u8>` and a spectrum the caller keeps, instead of allocating a compressed-byte buffer and two output vectors per call. `read_line_spectrum` and `read_spectrum` are unchanged and now call them, as `read_frame` calls `read_frame_into`. `LineSpectrum` and `MiniTdfSpectrum` already implement `Default`, so a caller can make the empty spectrum to fill.

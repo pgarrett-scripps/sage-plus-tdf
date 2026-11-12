@@ -99,7 +99,11 @@ fn rejects_corrupt_blobs_and_enforces_limits() {
     );
 }
 
-/// Set `SAGE_PLUS_MINITDF_ZENODO` to the extracted Zenodo record 10908040.
+/// Set `SAGE_PLUS_MINITDF_ZENODO` to the extracted Zenodo record 10908040,
+/// "Example dataset for the Bruker miniTDF format" (CC-BY-4.0), whose
+/// `1min_snippit_miniTDFcontents.tar` is
+/// `d49d12f03faca09386eccd2675ed992a978a42e4d6150585f230444c48e86213`. The peak
+/// total below is what this reader decodes from that record.
 #[test]
 fn reads_real_minitdf_when_available() {
     let Some(path) = std::env::var_os("SAGE_PLUS_MINITDF_ZENODO") else {
@@ -115,7 +119,7 @@ fn reads_real_minitdf_when_available() {
         assert!(spectrum.mz.is_sorted());
         peaks += spectrum.mz.len();
     }
-    println!("peaks {peaks}");
+    assert_eq!(peaks, 1_897_058);
 }
 
 #[test]
