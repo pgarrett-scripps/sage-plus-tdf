@@ -14,6 +14,12 @@ RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --all-features
 cargo deny check
 ```
 
+The last check needs cargo-deny, which is not a built-in subcommand: install it
+once with `cargo install cargo-deny --locked`. Without it the command fails with
+`error: no such command: deny`, which is a missing tool, not a broken checkout.
+CI runs `cargo deny check` on every push, so a change is not blocked by skipping
+it locally.
+
 The `minitdf` feature builds the C `zstd` library through `parquet`, so `--all-features` needs a C compiler. The default features must stay pure Rust; CI builds and tests them with the C compiler disabled. CI also runs these checks on macOS and Windows, builds with the MSRV, runs `cargo publish --dry-run` and smoke-tests the fuzz targets.
 
 Include a focused regression test for parsing or scientific behavior changes. Synthetic fixtures are preferred for malformed inputs. Record the origin, license and independent expected result of every reference fixture. Do not commit private acquisition data, patient information, access tokens or unpublished results. Describe any changes to supported formats or calibration models in the README.
