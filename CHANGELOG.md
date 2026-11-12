@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- Decode the miniTDF spectrum blob by splitting its four byte planes once, instead of rebuilding every word through a closure that indexed the blob four times, as the Zstandard frame decoder already does. The length check at the top of the function already proved every one of those indices in range. What is decoded is unchanged, and a test pins it against the previous decoder, blob by blob and error message by error message.
+
 ## 0.2.3, 2026-11-11
 
 - Add `TdfReader::read_frame_into`, which decodes a frame into a `Vec<u8>` and a `Frame` the caller keeps, instead of allocating a compressed-byte buffer and three frame vectors per frame. `read_frame` is unchanged and now calls it. `Frame` implements `Default`, so a caller can make the empty frame to fill.
