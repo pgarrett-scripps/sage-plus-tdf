@@ -40,11 +40,14 @@ mod error;
 mod mass;
 #[cfg(feature = "minitdf")]
 mod minitdf;
+#[cfg(feature = "minitdf")]
+mod minitdf_blob;
 mod mobility;
 mod reader;
 mod schema;
 mod tables;
 mod tsf;
+mod tsf_blob;
 
 pub use database::{MetadataDatabase, MetadataLimits, MetadataRow, SqlValue};
 pub use error::{Error, ErrorContext, ErrorKind};

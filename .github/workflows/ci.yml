@@ -152,4 +152,5 @@ jobs:
       - run: cargo +${{ env.FUZZ_NIGHTLY }} fuzz build --dev
       - run: cargo +${{ env.FUZZ_NIGHTLY }} fuzz run decoder --dev -- -max_total_time=30 -timeout=5 -rss_limit_mb=1024 -max_len=65536 -seed=20260926
       - run: cargo +${{ env.FUZZ_NIGHTLY }} fuzz run schema_calibration --dev -- -max_total_time=30 -timeout=5 -rss_limit_mb=1024 -max_len=32768 -seed=20260926
+      - run: cargo +${{ env.FUZZ_NIGHTLY }} fuzz run spectrum_blobs --dev -- -max_total_time=30 -timeout=5 -rss_limit_mb=1024 -max_len=32768 -seed=20260926
       - run: git diff --exit-code -- fuzz/Cargo.lock

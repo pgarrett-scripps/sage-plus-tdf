@@ -29,8 +29,12 @@ fn field(error: Error, table: &str, name: &str) -> Error {
 }
 #[path = "../../src/compression.rs"]
 mod compression;
+#[path = "../../src/minitdf_blob.rs"]
+mod minitdf_blob;
 #[path = "../../src/schema.rs"]
 mod schema;
+#[path = "../../src/tsf_blob.rs"]
+mod tsf_blob;
 
 pub fn decoder(data: &[u8]) {
     if data.len() < 5 || data.len() > 65_536 {
@@ -58,6 +62,39 @@ pub fn decoder(data: &[u8]) {
             limits,
             &mut frame,
         );
+    }
+}
+
+/// The TSF line spectrum and miniTDF spectrum blobs: the first two bytes are
+/// the peak count the reader would have taken from its metadata, the rest is
+/// the decompressed blob. Both parsers see every input, since either layout can
+/// reach either parser only through a corrupt file.
+pub fn spectrum_blobs(data: &[u8]) {
+    if data.len() < 2 || data.len() > 32_768 {
+        return;
+    }
+    let peaks = u16::from_le_bytes([data[0], data[1]]) as usize % 2049;
+    let blob = &data[2..];
+    // Twice through one pair of buffers, so a parse that follows a failed one
+    // fuzzes the buffer reuse as well as the parsers.
+    let mut indices = Vec::new();
+    let mut intensities = Vec::new();
+    for _ in 0..2 {
+        if tsf_blob::line_spectrum_peaks(blob, peaks, &mut indices, &mut intensities).is_ok() {
+            assert_eq!(indices.len(), peaks);
+            assert_eq!(intensities.len(), peaks);
+            assert!(indices.iter().all(|i| i.is_finite() && *i >= 0.0));
+            assert!(intensities.iter().all(|i| i.is_finite() && *i >= 0.0));
+        }
+    }
+    let mut mz = Vec::new();
+    for _ in 0..2 {
+        if minitdf_blob::spectrum_peaks(blob, peaks, &mut mz, &mut intensities).is_ok() {
+            assert_eq!(mz.len(), peaks);
+            assert_eq!(intensities.len(), peaks);
+            assert!(mz.iter().all(|mz| mz.is_finite() && *mz > 0.0));
+            assert!(intensities.iter().all(|i| i.is_finite() && *i >= 0.0));
+        }
     }
 }
 
@@ -135,11 +172,12 @@ fn json_row(data: &[u8]) -> Option<MetadataRow> {
 mod tests {
     #[test]
     fn corpus_seeds_run_and_json_rows_parse() {
-        for target in ["decoder", "schema_calibration"] {
+        for target in ["decoder", "schema_calibration", "spectrum_blobs"] {
             for entry in std::fs::read_dir(format!("corpus/{target}")).unwrap() {
                 let data = std::fs::read(entry.unwrap().path()).unwrap();
                 match target {
                     "decoder" => super::decoder(&data),
+                    "spectrum_blobs" => super::spectrum_blobs(&data),
                     _ => super::schema_calibration(&data),
                 }
             }

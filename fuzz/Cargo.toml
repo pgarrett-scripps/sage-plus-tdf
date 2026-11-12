@@ -28,5 +28,12 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "spectrum_blobs"
+path = "fuzz_targets/spectrum_blobs.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 members = ["."]
