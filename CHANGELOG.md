@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## 0.2.4, 2026-11-12
 
 - Add `DecodeBuffers` and `TdfReader::read_frame_into_buffers`, `TsfReader::read_line_spectrum_into_buffers` and `MiniTdfReader::read_spectrum_into_buffers`, which also reuse the buffer the Zstandard decoder writes into. `read_frame_into`, `read_line_spectrum_into` and `read_spectrum_into` allocated that one per call, which is why they saved no time over the allocating methods; these keep it. Every existing method is unchanged and now calls the new path with a buffer set of its own, and `examples/inspect.rs` reads an acquisition through one set. Reading every frame of a 2.0 GB acquisition (22,508 frames, 366.7 million peaks) takes 9.03 s against 9.39 s on 0.2.3's path, and 600,000 TSF line spectrum reads take 313 ms against 349 ms: medians of nine passes per variant, in three alternating rounds on an idle machine, with no overlap between the two sets of passes. miniTDF spectra, whose blobs are a few kilobytes, measure the same either way.
 - `examples/inspect.rs` reads TSF and miniTDF as well as TDF, choosing by what the directory holds, and prints the same shape of JSON digest for each. All three modes read through the buffer-reusing methods, so the example also shows how to use them.
