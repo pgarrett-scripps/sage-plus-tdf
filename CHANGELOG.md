@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Add `TsfReader::read_line_spectrum_into` and `MiniTdfReader::read_spectrum_into`, which decode into a `Vec<u8>` and a spectrum the caller keeps, instead of allocating a compressed-byte buffer and two output vectors per call. `read_line_spectrum` and `read_spectrum` are unchanged and now call them, as `read_frame` calls `read_frame_into`. `LineSpectrum` and `MiniTdfSpectrum` already implement `Default`, so a caller can make the empty spectrum to fill.
 - Decode the miniTDF spectrum blob by splitting its four byte planes once, instead of rebuilding every word through a closure that indexed the blob four times, as the Zstandard frame decoder already does. The length check at the top of the function already proved every one of those indices in range. What is decoded is unchanged, and a test pins it against the previous decoder, blob by blob and error message by error message.
 
 ## 0.2.3, 2026-11-11

@@ -1,5 +1,5 @@
 #![cfg(feature = "minitdf")]
-use sage_plus_tdf::{ErrorKind, Limits, MiniTdfPrecursor, MiniTdfReader};
+use sage_plus_tdf::{ErrorKind, Limits, MiniTdfPrecursor, MiniTdfReader, MiniTdfSpectrum};
 use std::path::{Path, PathBuf};
 
 /// MannLabs TimsRust `src/tests/test2.ms2` (two spectra).
@@ -116,4 +116,40 @@ fn reads_real_minitdf_when_available() {
         peaks += spectrum.mz.len();
     }
     println!("peaks {peaks}");
+}
+
+#[test]
+fn read_spectrum_into_reuses_buffers_and_matches_read_spectrum() {
+    let reader = MiniTdfReader::open(fixture()).unwrap();
+    let mut data = Vec::new();
+    let mut spectrum = MiniTdfSpectrum::default();
+    reader
+        .read_spectrum_into(0, &mut data, &mut spectrum)
+        .unwrap();
+    let capacities = (data.capacity(), spectrum.mz.capacity());
+    assert!(capacities.0 > 0 && capacities.1 > 0);
+    for _ in 0..3 {
+        reader
+            .read_spectrum_into(0, &mut data, &mut spectrum)
+            .unwrap();
+        assert_eq!(spectrum, reader.read_spectrum(0).unwrap());
+        // Re-reading a spectrum reuses the buffers instead of allocating again.
+        assert_eq!((data.capacity(), spectrum.mz.capacity()), capacities);
+    }
+    for index in [1, 0] {
+        reader
+            .read_spectrum_into(index, &mut data, &mut spectrum)
+            .unwrap();
+        assert_eq!(spectrum, reader.read_spectrum(index).unwrap());
+    }
+    // A failed read leaves both buffers usable for the next spectrum.
+    assert!(
+        reader
+            .read_spectrum_into(2, &mut data, &mut spectrum)
+            .is_err()
+    );
+    reader
+        .read_spectrum_into(1, &mut data, &mut spectrum)
+        .unwrap();
+    assert_eq!(spectrum, reader.read_spectrum(1).unwrap());
 }

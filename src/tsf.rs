@@ -153,8 +153,26 @@ impl TsfReader {
 
     /// The frame's line spectrum. Requires `HasLineSpectra` = 1.
     pub fn read_line_spectrum(&self, id: u64) -> Result<LineSpectrum> {
+        let mut data = Vec::new();
+        let mut spectrum = LineSpectrum::default();
+        self.read_line_spectrum_into(id, &mut data, &mut spectrum)?;
+        Ok(spectrum)
+    }
+
+    /// Read a line spectrum into buffers the caller keeps. `data` takes the
+    /// compressed bytes and `spectrum` the decoded peaks; both are cleared
+    /// first and keep their capacity, so reading many spectra in a loop
+    /// allocates once instead of per spectrum. Decoding and every limit are
+    /// those of [`read_line_spectrum`](Self::read_line_spectrum). On error both
+    /// buffers hold partial data and must not be read.
+    pub fn read_line_spectrum_into(
+        &self,
+        id: u64,
+        data: &mut Vec<u8>,
+        spectrum: &mut LineSpectrum,
+    ) -> Result<()> {
         let offset = self.frames.get(&id).and_then(|frame| frame.binary_offset);
-        self.read_line_inner(id).map_err(|error| {
+        self.read_line_inner(id, data, spectrum).map_err(|error| {
             error.with_context(ErrorContext {
                 path: Some(self.directory.join("analysis.tsf_bin")),
                 frame_id: Some(id),
@@ -164,7 +182,16 @@ impl TsfReader {
         })
     }
 
-    fn read_line_inner(&self, id: u64) -> Result<LineSpectrum> {
+    fn read_line_inner(
+        &self,
+        id: u64,
+        data: &mut Vec<u8>,
+        spectrum: &mut LineSpectrum,
+    ) -> Result<()> {
+        data.clear();
+        spectrum.frame_id = id;
+        spectrum.indices.clear();
+        spectrum.intensities.clear();
         if !self.line_spectra_flag()? {
             return Err(Error::Unsupported(
                 "TSF without line spectra (HasLineSpectra is not 1)".into(),
@@ -177,13 +204,9 @@ impl TsfReader {
         let peaks = info
             .peak_count
             .ok_or_else(|| crate::field(invalid("missing peak count"), "Frames", "NumPeaks"))?;
-        let empty = LineSpectrum {
-            frame_id: id,
-            ..Default::default()
-        };
         let Some(offset) = info.binary_offset else {
             return if peaks == 0 {
-                Ok(empty)
+                Ok(())
             } else {
                 Err(crate::field(
                     invalid("frame with peaks has no binary offset"),
@@ -214,7 +237,7 @@ impl TsfReader {
         }
         if compressed == 0 {
             return if peaks == 0 {
-                Ok(empty)
+                Ok(())
             } else {
                 Err(invalid("empty line spectrum for a frame with peaks"))
             };
@@ -230,53 +253,65 @@ impl TsfReader {
                 expected,
             ));
         }
-        let mut data = vec![0u8; compressed];
-        read_exact_at(&self.binary, &mut data, offset + 8)?;
-        let decoded = compression::zstd(&data, expected, self.limits)?;
+        data.resize(compressed, 0);
+        read_exact_at(&self.binary, data, offset + 8)?;
+        let decoded = compression::zstd(data, expected, self.limits)?;
         if decoded.len() != expected {
             return Err(invalid(
                 "decoded line spectrum length disagrees with NumPeaks",
             ));
         }
-        let (indices, intensities) = line_spectrum_peaks(&decoded, peaks)?;
-        Ok(LineSpectrum {
-            frame_id: id,
-            indices,
-            intensities,
-        })
+        line_spectrum_peaks(
+            &decoded,
+            peaks,
+            &mut spectrum.indices,
+            &mut spectrum.intensities,
+        )
     }
 }
 
 /// Split a decoded line spectrum into its two arrays: `peaks` little-endian
 /// f64 TOF indices followed by `peaks` little-endian f32 intensities. Every
 /// value must be finite and nonnegative, so a corrupt blob cannot reach a
-/// caller as a NaN index or intensity.
-fn line_spectrum_peaks(decoded: &[u8], peaks: usize) -> Result<(Vec<f64>, Vec<f32>)> {
+/// caller as a NaN index or intensity. `indices` and `intensities` are cleared
+/// first and keep their capacity; on error they hold partial data.
+fn line_spectrum_peaks(
+    decoded: &[u8],
+    peaks: usize,
+    indices: &mut Vec<f64>,
+    intensities: &mut Vec<f32>,
+) -> Result<()> {
+    indices.clear();
+    intensities.clear();
     if peaks.checked_mul(12) != Some(decoded.len()) {
         return Err(invalid(
             "decoded line spectrum length disagrees with NumPeaks",
         ));
     }
-    let (indices, intensities) = decoded.split_at(peaks * 8);
-    let indices: Vec<f64> = indices
-        .as_chunks::<8>()
-        .0
-        .iter()
-        .map(|b| f64::from_le_bytes(*b))
-        .collect();
+    let (index_bytes, intensity_bytes) = decoded.split_at(peaks * 8);
+    indices.reserve(peaks);
+    indices.extend(
+        index_bytes
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|b| f64::from_le_bytes(*b)),
+    );
     if indices.iter().any(|i| !i.is_finite() || *i < 0.0) {
         return Err(invalid("invalid line spectrum index"));
     }
-    let intensities: Vec<f32> = intensities
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .map(|b| f32::from_le_bytes(*b))
-        .collect();
+    intensities.reserve(peaks);
+    intensities.extend(
+        intensity_bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| f32::from_le_bytes(*b)),
+    );
     if intensities.iter().any(|i| !i.is_finite() || *i < 0.0) {
         return Err(invalid("invalid line spectrum intensity"));
     }
-    Ok((indices, intensities))
+    Ok(())
 }
 
 const _: () = {
@@ -292,25 +327,30 @@ mod tests {
         bytes.extend(intensities.iter().flat_map(|i| i.to_le_bytes()));
         bytes
     }
+    fn decode(decoded: &[u8], peaks: usize) -> Result<(Vec<f64>, Vec<f32>)> {
+        let mut indices = Vec::new();
+        let mut intensities = Vec::new();
+        line_spectrum_peaks(decoded, peaks, &mut indices, &mut intensities)?;
+        Ok((indices, intensities))
+    }
     #[test]
     fn keeps_finite_nonnegative_peaks() {
-        let (indices, intensities) =
-            line_spectrum_peaks(&blob(&[0.0, 221.5], &[0.0, 250.5]), 2).unwrap();
+        let (indices, intensities) = decode(&blob(&[0.0, 221.5], &[0.0, 250.5]), 2).unwrap();
         assert_eq!(indices, [0.0, 221.5]);
         assert_eq!(intensities, [0.0, 250.5]);
     }
     #[test]
     fn rejects_nonfinite_or_negative_intensities() {
         for intensities in [[1.0, f32::NAN], [1.0, f32::INFINITY], [1.0, -1.0]] {
-            let error = line_spectrum_peaks(&blob(&[1.0, 2.0], &intensities), 2).unwrap_err();
+            let error = decode(&blob(&[1.0, 2.0], &intensities), 2).unwrap_err();
             assert_eq!(error.kind(), crate::ErrorKind::CorruptData);
         }
     }
     #[test]
     fn rejects_nonfinite_or_negative_indices_and_wrong_lengths() {
         for indices in [[1.0, f64::NAN], [1.0, f64::NEG_INFINITY], [1.0, -1.0]] {
-            assert!(line_spectrum_peaks(&blob(&indices, &[1.0, 2.0]), 2).is_err());
+            assert!(decode(&blob(&indices, &[1.0, 2.0]), 2).is_err());
         }
-        assert!(line_spectrum_peaks(&blob(&[1.0], &[1.0]), 2).is_err());
+        assert!(decode(&blob(&[1.0], &[1.0]), 2).is_err());
     }
 }

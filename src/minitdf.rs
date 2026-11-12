@@ -164,8 +164,26 @@ impl MiniTdfReader {
 
     /// The spectrum of precursor row `index`.
     pub fn read_spectrum(&self, index: usize) -> Result<MiniTdfSpectrum> {
+        let mut data = Vec::new();
+        let mut spectrum = MiniTdfSpectrum::default();
+        self.read_spectrum_into(index, &mut data, &mut spectrum)?;
+        Ok(spectrum)
+    }
+
+    /// Read a spectrum into buffers the caller keeps. `data` takes the
+    /// compressed bytes and `spectrum` the decoded peaks; both are cleared
+    /// first and keep their capacity, so reading many spectra in a loop
+    /// allocates once instead of per spectrum. Decoding and every limit are
+    /// those of [`read_spectrum`](Self::read_spectrum). On error both buffers
+    /// hold partial data and must not be read.
+    pub fn read_spectrum_into(
+        &self,
+        index: usize,
+        data: &mut Vec<u8>,
+        spectrum: &mut MiniTdfSpectrum,
+    ) -> Result<()> {
         let offset = self.precursors.get(index).map(|p| p.binary_offset);
-        self.read_inner(index).map_err(|error| {
+        self.read_inner(index, data, spectrum).map_err(|error| {
             error.with_context(ErrorContext {
                 path: Some(self.binary_path.clone()),
                 byte_offset: offset,
@@ -174,7 +192,16 @@ impl MiniTdfReader {
         })
     }
 
-    fn read_inner(&self, index: usize) -> Result<MiniTdfSpectrum> {
+    fn read_inner(
+        &self,
+        index: usize,
+        data: &mut Vec<u8>,
+        spectrum: &mut MiniTdfSpectrum,
+    ) -> Result<()> {
+        data.clear();
+        spectrum.index = index;
+        spectrum.mz.clear();
+        spectrum.intensities.clear();
         let precursor = self
             .precursors
             .get(index)
@@ -226,18 +253,13 @@ impl MiniTdfReader {
                 expected,
             ));
         }
-        let mut data = vec![0u8; compressed];
-        crate::reader::read_exact_at(&self.binary, &mut data, offset + 8)?;
-        let decoded = compression::zstd(&data, expected, self.limits)?;
+        data.resize(compressed, 0);
+        crate::reader::read_exact_at(&self.binary, data, offset + 8)?;
+        let decoded = compression::zstd(data, expected, self.limits)?;
         if decoded.len() != expected {
             return Err(invalid("decoded spectrum length disagrees with peak count"));
         }
-        let (mz, intensities) = spectrum_peaks(&decoded, peaks)?;
-        Ok(MiniTdfSpectrum {
-            index,
-            mz,
-            intensities,
-        })
+        spectrum_peaks(&decoded, peaks, &mut spectrum.mz, &mut spectrum.intensities)
     }
 }
 
@@ -245,8 +267,16 @@ impl MiniTdfReader {
 /// values followed by `peaks` f32 intensities, where byte `k` of word `i` is at
 /// `k * words + i`. Every value must be finite, the m/z positive and the
 /// intensities nonnegative, so a corrupt blob cannot reach a caller as a NaN
-/// m/z or intensity.
-fn spectrum_peaks(decoded: &[u8], peaks: usize) -> Result<(Vec<f64>, Vec<f32>)> {
+/// m/z or intensity. `mz` and `intensities` are cleared first and keep their
+/// capacity; on error they hold partial data.
+fn spectrum_peaks(
+    decoded: &[u8],
+    peaks: usize,
+    mz: &mut Vec<f64>,
+    intensities: &mut Vec<f32>,
+) -> Result<()> {
+    mz.clear();
+    intensities.clear();
     if peaks.checked_mul(12) != Some(decoded.len()) {
         return Err(invalid("decoded spectrum length disagrees with peak count"));
     }
@@ -265,33 +295,36 @@ fn spectrum_peaks(decoded: &[u8], peaks: usize) -> Result<(Vec<f64>, Vec<f32>)> 
     let (mz1, intensity1) = plane1.split_at(2 * peaks);
     let (mz2, intensity2) = plane2.split_at(2 * peaks);
     let (mz3, intensity3) = plane3.split_at(2 * peaks);
-    let mz: Vec<f64> = mz0
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .zip(mz1.as_chunks::<2>().0)
-        .zip(mz2.as_chunks::<2>().0)
-        .zip(mz3.as_chunks::<2>().0)
-        .map(|(((b0, b1), b2), b3)| {
-            let low = u32::from_le_bytes([b0[0], b1[0], b2[0], b3[0]]);
-            let high = u32::from_le_bytes([b0[1], b1[1], b2[1], b3[1]]);
-            f64::from_bits(u64::from(low) | (u64::from(high) << 32))
-        })
-        .collect();
+    mz.reserve(peaks);
+    mz.extend(
+        mz0.as_chunks::<2>()
+            .0
+            .iter()
+            .zip(mz1.as_chunks::<2>().0)
+            .zip(mz2.as_chunks::<2>().0)
+            .zip(mz3.as_chunks::<2>().0)
+            .map(|(((b0, b1), b2), b3)| {
+                let low = u32::from_le_bytes([b0[0], b1[0], b2[0], b3[0]]);
+                let high = u32::from_le_bytes([b0[1], b1[1], b2[1], b3[1]]);
+                f64::from_bits(u64::from(low) | (u64::from(high) << 32))
+            }),
+    );
     if mz.iter().any(|mz| !mz.is_finite() || *mz <= 0.0) {
         return Err(invalid("invalid spectrum m/z"));
     }
-    let intensities: Vec<f32> = intensity0
-        .iter()
-        .zip(intensity1)
-        .zip(intensity2)
-        .zip(intensity3)
-        .map(|(((b0, b1), b2), b3)| f32::from_bits(u32::from_le_bytes([*b0, *b1, *b2, *b3])))
-        .collect();
+    intensities.reserve(peaks);
+    intensities.extend(
+        intensity0
+            .iter()
+            .zip(intensity1)
+            .zip(intensity2)
+            .zip(intensity3)
+            .map(|(((b0, b1), b2), b3)| f32::from_bits(u32::from_le_bytes([*b0, *b1, *b2, *b3]))),
+    );
     if intensities.iter().any(|i| !i.is_finite() || *i < 0.0) {
         return Err(invalid("invalid spectrum intensity"));
     }
-    Ok((mz, intensities))
+    Ok(())
 }
 
 fn parquet_error(error: parquet::errors::ParquetError) -> Error {
@@ -440,25 +473,31 @@ mod tests {
             .flat_map(|b| words.iter().map(move |w| w.to_le_bytes()[b]))
             .collect()
     }
+    fn decode(decoded: &[u8], peaks: usize) -> Result<(Vec<f64>, Vec<f32>)> {
+        let mut mz = Vec::new();
+        let mut intensities = Vec::new();
+        spectrum_peaks(decoded, peaks, &mut mz, &mut intensities)?;
+        Ok((mz, intensities))
+    }
     #[test]
     fn keeps_finite_positive_mz_and_nonnegative_intensities() {
-        let (mz, intensities) = spectrum_peaks(&blob(&[100.0, 200.002], &[0.0, 2.0]), 2).unwrap();
+        let (mz, intensities) = decode(&blob(&[100.0, 200.002], &[0.0, 2.0]), 2).unwrap();
         assert_eq!(mz, [100.0, 200.002]);
         assert_eq!(intensities, [0.0, 2.0]);
     }
     #[test]
     fn rejects_nonfinite_or_negative_intensities() {
         for intensities in [[1.0, f32::NAN], [1.0, f32::INFINITY], [1.0, -1.0]] {
-            let error = spectrum_peaks(&blob(&[100.0, 200.0], &intensities), 2).unwrap_err();
+            let error = decode(&blob(&[100.0, 200.0], &intensities), 2).unwrap_err();
             assert_eq!(error.kind(), crate::ErrorKind::CorruptData);
         }
     }
     #[test]
     fn rejects_nonpositive_mz_and_wrong_lengths() {
         for mz in [[100.0, f64::NAN], [100.0, 0.0], [100.0, -1.0]] {
-            assert!(spectrum_peaks(&blob(&mz, &[1.0, 2.0]), 2).is_err());
+            assert!(decode(&blob(&mz, &[1.0, 2.0]), 2).is_err());
         }
-        assert!(spectrum_peaks(&blob(&[100.0], &[1.0]), 2).is_err());
+        assert!(decode(&blob(&[100.0], &[1.0]), 2).is_err());
     }
     /// The decoder as it read the blob before the planes were split: every
     /// word rebuilt through a closure that indexed `decoded` four times.
@@ -500,7 +539,7 @@ mod tests {
         // Valid blobs of every length from empty to 64 peaks.
         for peaks in 0..=mz.len() {
             let bytes = blob(&mz[..peaks], &intensities[..peaks]);
-            let (left_mz, left_intensities) = spectrum_peaks(&bytes, peaks).unwrap();
+            let (left_mz, left_intensities) = decode(&bytes, peaks).unwrap();
             let (right_mz, right_intensities) = reference_spectrum_peaks(&bytes, peaks).unwrap();
             assert_eq!(left_mz, right_mz, "m/z disagree at {peaks} peaks");
             assert_eq!(
@@ -519,7 +558,7 @@ mod tests {
             (&blob(&[100.0, 200.0], &[1.0, -1.0]), 2),
         ];
         for (bytes, peaks) in malformed {
-            let left = spectrum_peaks(bytes, peaks).unwrap_err();
+            let left = decode(bytes, peaks).unwrap_err();
             let right = reference_spectrum_peaks(bytes, peaks).unwrap_err();
             assert_eq!(left.kind(), right.kind());
             assert_eq!(left.to_string(), right.to_string());

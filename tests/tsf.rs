@@ -1,4 +1,4 @@
-use sage_plus_tdf::{ErrorKind, Limits, TsfReader};
+use sage_plus_tdf::{ErrorKind, Limits, LineSpectrum, TsfReader};
 use std::path::{Path, PathBuf};
 
 fn fixture() -> PathBuf {
@@ -200,4 +200,41 @@ fn reads_real_tsf_run_when_available() {
     }
     assert_eq!(peaks, 70_265);
     assert_eq!(reader.frame_msms_info().unwrap().len(), 30);
+}
+
+#[test]
+fn read_line_spectrum_into_reuses_buffers_and_matches_read_line_spectrum() {
+    let reader = TsfReader::open(fixture()).unwrap();
+    let mut data = Vec::new();
+    let mut spectrum = LineSpectrum::default();
+    reader
+        .read_line_spectrum_into(1, &mut data, &mut spectrum)
+        .unwrap();
+    let capacities = (data.capacity(), spectrum.indices.capacity());
+    assert!(capacities.0 > 0 && capacities.1 > 0);
+    for _ in 0..3 {
+        reader
+            .read_line_spectrum_into(1, &mut data, &mut spectrum)
+            .unwrap();
+        assert_eq!(spectrum, reader.read_line_spectrum(1).unwrap());
+        // Re-reading a spectrum reuses the buffers instead of allocating again.
+        assert_eq!((data.capacity(), spectrum.indices.capacity()), capacities);
+    }
+    // Frame 3 has no binary offset and no peaks, so the buffers come back empty.
+    for id in [2, 3, 1] {
+        reader
+            .read_line_spectrum_into(id, &mut data, &mut spectrum)
+            .unwrap();
+        assert_eq!(spectrum, reader.read_line_spectrum(id).unwrap());
+    }
+    // A failed read leaves both buffers usable for the next spectrum.
+    assert!(
+        reader
+            .read_line_spectrum_into(9, &mut data, &mut spectrum)
+            .is_err()
+    );
+    reader
+        .read_line_spectrum_into(2, &mut data, &mut spectrum)
+        .unwrap();
+    assert_eq!(spectrum, reader.read_line_spectrum(2).unwrap());
 }
