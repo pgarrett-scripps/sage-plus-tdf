@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## 0.2.3, 2026-11-11
 
 - Add `TdfReader::read_frame_into`, which decodes a frame into a `Vec<u8>` and a `Frame` the caller keeps, instead of allocating a compressed-byte buffer and three frame vectors per frame. `read_frame` is unchanged and now calls it. `Frame` implements `Default`, so a caller can make the empty frame to fill.
 - Decode the Zstandard frame layout by splitting its four byte planes once, instead of reading every word through a closure that bounds-checked an index already covered by the length check, and decide `TdfReader::acquisition_type` in one pass over the frames instead of two. Reading every frame of a 1.0 GB acquisition (22,508 frames, 366.7 million peaks) takes 9.95 s instead of 10.24 s, 2.8% less on the median of three passes. What is read is unchanged.
