@@ -34,18 +34,27 @@
 //! # }
 //! ```
 #![forbid(unsafe_code)]
+#![warn(missing_docs)]
+// Documented module by module; `missing_docs` warns everywhere else.
 mod compression;
+#[allow(missing_docs)]
 mod database;
 mod error;
+#[allow(missing_docs)]
 mod mass;
 #[cfg(feature = "minitdf")]
+#[allow(missing_docs)]
 mod minitdf;
 #[cfg(feature = "minitdf")]
 mod minitdf_blob;
+#[allow(missing_docs)]
 mod mobility;
+#[allow(missing_docs)]
 mod reader;
 mod schema;
+#[allow(missing_docs)]
 mod tables;
+#[allow(missing_docs)]
 mod tsf;
 mod tsf_blob;
 
@@ -64,15 +73,26 @@ pub use tables::{
 };
 pub use tsf::TsfReader;
 
+/// The result of every fallible call in this crate: see [`Error`] for the
+/// failure variants and [`ErrorKind`] for the category to match on.
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Resource ceilings checked before allocating compressed or decoded frame buffers.
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
+    /// Largest compressed frame or spectrum blob read from the binary file, in
+    /// bytes. A header claiming more is rejected before the read.
     pub max_compressed_bytes: usize,
+    /// Largest decoded blob, in bytes. It is also the Zstandard decoder's
+    /// window ceiling, so a decompression bomb is refused, not buffered.
     pub max_decompressed_bytes: usize,
+    /// Largest peak count accepted for one frame or spectrum.
     pub max_peaks: usize,
+    /// Largest scan count accepted for one frame, including the count an LZF
+    /// frame header carries, which may exceed `Frames.NumScans`.
     pub max_scans: usize,
+    /// Ceilings for the SQLite metadata: rows, columns, value and result
+    /// sizes, virtual-machine steps and the query timeout.
     pub metadata: MetadataLimits,
 }
 impl Default for Limits {
@@ -91,9 +111,16 @@ impl Default for Limits {
 /// `Default` gives the empty frame a buffer-reusing reader fills.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Frame {
+    /// `Frames.Id` of the frame these coordinates were read from.
     pub id: u64,
+    /// Where each scan starts in `tof_indices` and `intensities`, with a final
+    /// entry equal to the peak count: scan `i` spans
+    /// `scan_offsets[i]..scan_offsets[i + 1]`.
     pub scan_offsets: Vec<usize>,
+    /// Time-of-flight index of every peak, scan by scan and ascending within a
+    /// scan. Convert with [`MzModel`] or [`LinearMzScale`].
     pub tof_indices: Vec<u32>,
+    /// Intensity of every peak, in the same order, as stored.
     pub intensities: Vec<u32>,
 }
 

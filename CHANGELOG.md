@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Document the public items a caller meets first: `Result`, `Limits`'s five ceilings, `Frame`'s four fields, every `ErrorKind` variant, every `ErrorContext` field, and `Error` with its variants, named fields and four methods. `missing_docs` now warns, with a module-level allow on the modules whose items are still bare, so the rest can be documented module by module instead of in one pass.
 - The miniTDF real-data test pins the peak total it decodes from Zenodo record 10908040, 1,897,058 over 2,467 spectra, instead of printing it. Its TSF counterpart already pinned 70,265, so a decoder change that halved every miniTDF spectrum would have passed.
 - Test the ModelType 2 mobility model the way the m/z model is tested: `MobilityModel::scan_number` is asserted to invert `one_over_k0` inside the C8 to C9 window and across both linear continuations, `one_over_k0` to decrease strictly over 40,000 scans, and the non-finite, degenerate and unusable-coefficient paths to be reported as corrupt data. `src/mobility.rs` had no test module. No source line changed.
 - Fuzz the TSF line spectrum and miniTDF spectrum blob parsers. Both moved into their own files (`src/tsf_blob.rs`, `src/minitdf_blob.rs`), so the harness compiles them without `analysis.tsf`, `parquet` or a `File`, and a `spectrum_blobs` target runs them against the same input with reused buffers, asserting that an accepted blob yields exactly `peaks` finite values. Nothing a caller sees changed.
