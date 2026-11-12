@@ -19,6 +19,10 @@ pub(crate) fn word(data: &[u8], offset: usize) -> Result<u32> {
 
 /// Decode into an existing frame, reusing its three buffers. On error the
 /// frame holds whatever had been decoded so far and must not be read.
+// The frame metadata, the limits and the two buffers are all needed here, and
+// the compressed bytes are borrowed from a buffer the caller owns, so they
+// cannot be grouped into one struct with the decoded buffer.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn decode_into(
     kind: u32,
     id: u64,
@@ -26,6 +30,7 @@ pub(crate) fn decode_into(
     scans: usize,
     peaks: usize,
     limits: Limits,
+    decoded: &mut Vec<u8>,
     frame: &mut Frame,
 ) -> Result<()> {
     if scans > limits.max_scans {
@@ -49,6 +54,10 @@ pub(crate) fn decode_into(
         ));
     }
     frame.id = id;
+    // An LZF frame never reaches `zstd_into`, which is what otherwise clears
+    // this, so clear it here: a caller reading a mixed acquisition must not see
+    // the bytes of the previous Zstandard frame.
+    decoded.clear();
     frame.scan_offsets.clear();
     frame.tof_indices.clear();
     frame.intensities.clear();
@@ -56,7 +65,7 @@ pub(crate) fn decode_into(
     frame.tof_indices.reserve(peaks);
     frame.intensities.reserve(peaks);
     match kind {
-        2 => decode_v2(data, scans, peaks, limits, frame)?,
+        2 => decode_v2(data, scans, peaks, limits, decoded, frame)?,
         1 => decode_v1(data, scans, peaks, limits, frame)?,
         _ => return Err(invalid("unsupported compression")),
     }
@@ -74,6 +83,7 @@ fn decode_v2(
     scans: usize,
     peaks: usize,
     limits: Limits,
+    decoded: &mut Vec<u8>,
     frame: &mut Frame,
 ) -> Result<()> {
     let expected = peaks
@@ -88,15 +98,25 @@ fn decode_v2(
             expected,
         ));
     }
-    let decoded = zstd(data, expected, limits)?;
-    decode_v2_bytes(&decoded, scans, peaks, frame)
+    zstd_into(data, expected, limits, decoded)?;
+    decode_v2_bytes(decoded, scans, peaks, frame)
 }
 
 /// Decode one complete Zstandard frame of at most `max_bytes` output bytes.
 /// Longer output is corrupt, or a resource limit when `max_bytes` exceeds
 /// `limits.max_decompressed_bytes`. Trailing compressed bytes, truncation and
 /// checksum mismatches are errors. Shared by TDF, TSF and miniTDF blobs.
-pub(crate) fn zstd(data: &[u8], max_bytes: usize, limits: Limits) -> Result<Vec<u8>> {
+///
+/// `out` is cleared first and keeps its capacity, so decoding frame after
+/// frame through one buffer allocates once instead of per frame. On error it
+/// holds partial output and must not be read.
+pub(crate) fn zstd_into(
+    data: &[u8],
+    max_bytes: usize,
+    limits: Limits,
+    out: &mut Vec<u8>,
+) -> Result<()> {
+    out.clear();
     let capped = max_bytes > limits.max_decompressed_bytes;
     let max_bytes = max_bytes.min(limits.max_decompressed_bytes);
     let mut decoder = ruzstd::decoding::StreamingDecoder::new_with_max_window_size(
@@ -119,18 +139,17 @@ pub(crate) fn zstd(data: &[u8], max_bytes: usize, limits: Limits) -> Result<Vec<
             source: Box::new(source),
         }
     })?;
-    let mut decoded = Vec::new();
     decoder
         .by_ref()
         .take((max_bytes as u64).saturating_add(1))
-        .read_to_end(&mut decoded)
+        .read_to_end(out)
         .map_err(|source| Error::Decoder {
             format: "Zstandard",
             source: Box::new(source),
         })?;
-    if decoded.len() > max_bytes {
+    if out.len() > max_bytes {
         return Err(if capped {
-            limit("decompressed_bytes", max_bytes, decoded.len())
+            limit("decompressed_bytes", max_bytes, out.len())
         } else {
             invalid("decoded byte count exceeds the recorded extent")
         });
@@ -145,7 +164,7 @@ pub(crate) fn zstd(data: &[u8], max_bytes: usize, limits: Limits) -> Result<Vec<
     {
         return Err(invalid("Zstandard checksum mismatch"));
     }
-    Ok(decoded)
+    Ok(())
 }
 
 fn decode_v2_bytes(bytes: &[u8], scans: usize, peaks: usize, frame: &mut Frame) -> Result<()> {
@@ -322,7 +341,17 @@ mod tests {
         limits: Limits,
     ) -> Result<Frame> {
         let mut frame = Frame::default();
-        decode_into(kind, id, data, scans, peaks, limits, &mut frame)?;
+        let mut decoded = Vec::new();
+        decode_into(
+            kind,
+            id,
+            data,
+            scans,
+            peaks,
+            limits,
+            &mut decoded,
+            &mut frame,
+        )?;
         Ok(frame)
     }
     fn shuffled(words: &[u32]) -> Vec<u8> {
@@ -515,7 +544,9 @@ mod tests {
             max_decompressed_bytes: usize::MAX,
             ..Limits::default()
         };
-        assert_eq!(zstd(compressed, usize::MAX, limits).unwrap().len(), 36);
+        let mut decoded = Vec::new();
+        zstd_into(compressed, usize::MAX, limits, &mut decoded).unwrap();
+        assert_eq!(decoded.len(), 36);
     }
     #[test]
     fn zstandard_checksum_trailing_bytes_and_truncations_are_rejected() {

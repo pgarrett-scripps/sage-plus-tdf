@@ -4,7 +4,7 @@
 //!
 //! The blob layout and the isolation width heuristic follow MannLabs TimsRust
 //! `timsrust-minitdf` 0.6.6.
-use crate::{Error, ErrorContext, Limits, Result, compression, invalid, limit};
+use crate::{DecodeBuffers, Error, ErrorContext, Limits, Result, compression, invalid, limit};
 use parquet::{
     file::reader::{FileReader, SerializedFileReader},
     record::{Field, Row},
@@ -164,9 +164,9 @@ impl MiniTdfReader {
 
     /// The spectrum of precursor row `index`.
     pub fn read_spectrum(&self, index: usize) -> Result<MiniTdfSpectrum> {
-        let mut data = Vec::new();
+        let mut buffers = DecodeBuffers::default();
         let mut spectrum = MiniTdfSpectrum::default();
-        self.read_spectrum_into(index, &mut data, &mut spectrum)?;
+        self.read_spectrum_into_buffers(index, &mut buffers, &mut spectrum)?;
         Ok(spectrum)
     }
 
@@ -182,20 +182,55 @@ impl MiniTdfReader {
         data: &mut Vec<u8>,
         spectrum: &mut MiniTdfSpectrum,
     ) -> Result<()> {
+        // The decoder's own output buffer is allocated per call here.
+        // `read_spectrum_into_buffers` keeps that one too.
+        let mut decoded = Vec::new();
+        self.read_spectrum_into_parts(index, data, &mut decoded, spectrum)
+    }
+
+    /// Read a spectrum through buffers the caller keeps, including the one the
+    /// Zstandard decoder writes into, which
+    /// [`read_spectrum_into`](Self::read_spectrum_into) still allocates per
+    /// call. Decoding and every limit are those of
+    /// [`read_spectrum`](Self::read_spectrum). On error the buffers and the
+    /// spectrum hold partial data and must not be read.
+    pub fn read_spectrum_into_buffers(
+        &self,
+        index: usize,
+        buffers: &mut DecodeBuffers,
+        spectrum: &mut MiniTdfSpectrum,
+    ) -> Result<()> {
+        self.read_spectrum_into_parts(
+            index,
+            &mut buffers.compressed,
+            &mut buffers.decoded,
+            spectrum,
+        )
+    }
+
+    fn read_spectrum_into_parts(
+        &self,
+        index: usize,
+        data: &mut Vec<u8>,
+        decoded: &mut Vec<u8>,
+        spectrum: &mut MiniTdfSpectrum,
+    ) -> Result<()> {
         let offset = self.precursors.get(index).map(|p| p.binary_offset);
-        self.read_inner(index, data, spectrum).map_err(|error| {
-            error.with_context(ErrorContext {
-                path: Some(self.binary_path.clone()),
-                byte_offset: offset,
-                ..Default::default()
+        self.read_inner(index, data, decoded, spectrum)
+            .map_err(|error| {
+                error.with_context(ErrorContext {
+                    path: Some(self.binary_path.clone()),
+                    byte_offset: offset,
+                    ..Default::default()
+                })
             })
-        })
     }
 
     fn read_inner(
         &self,
         index: usize,
         data: &mut Vec<u8>,
+        decoded: &mut Vec<u8>,
         spectrum: &mut MiniTdfSpectrum,
     ) -> Result<()> {
         data.clear();
@@ -255,12 +290,12 @@ impl MiniTdfReader {
         }
         data.resize(compressed, 0);
         crate::reader::read_exact_at(&self.binary, data, offset + 8)?;
-        let decoded = compression::zstd(data, expected, self.limits)?;
+        compression::zstd_into(data, expected, self.limits, decoded)?;
         if decoded.len() != expected {
             return Err(invalid("decoded spectrum length disagrees with peak count"));
         }
         crate::minitdf_blob::spectrum_peaks(
-            &decoded,
+            decoded,
             peaks,
             &mut spectrum.mz,
             &mut spectrum.intensities,

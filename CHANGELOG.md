@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Add `DecodeBuffers` and `TdfReader::read_frame_into_buffers`, `TsfReader::read_line_spectrum_into_buffers` and `MiniTdfReader::read_spectrum_into_buffers`, which also reuse the buffer the Zstandard decoder writes into. `read_frame_into`, `read_line_spectrum_into` and `read_spectrum_into` allocated that one per call, which is why they saved no time over the allocating methods; these keep it. Every existing method is unchanged and now calls the new path with a buffer set of its own, and `examples/inspect.rs` reads an acquisition through one set.
 - `examples/inspect.rs` reads TSF and miniTDF as well as TDF, choosing by what the directory holds, and prints the same shape of JSON digest for each. All three modes read through the buffer-reusing methods, so the example also shows how to use them.
 - Document the public items a caller meets first: `Result`, `Limits`'s five ceilings, `Frame`'s four fields, every `ErrorKind` variant, every `ErrorContext` field, and `Error` with its variants, named fields and four methods. `missing_docs` now warns, with a module-level allow on the modules whose items are still bare, so the rest can be documented module by module instead of in one pass.
 - The miniTDF real-data test pins the peak total it decodes from Zenodo record 10908040, 1,897,058 over 2,467 spectra, instead of printing it. Its TSF counterpart already pinned 70,265, so a decoder change that halved every miniTDF spectrum would have passed.

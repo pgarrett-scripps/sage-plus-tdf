@@ -49,9 +49,11 @@ pub fn decoder(data: &[u8]) {
         max_decompressed_bytes: 32_768,
         ..Default::default()
     };
-    // Twice into one frame, so a decode that follows a partial or failed one
-    // fuzzes the buffer reuse in `decode_into` as well as the decoders.
+    // Twice into one frame and one decoded buffer, so a decode that follows a
+    // partial or failed one fuzzes the buffer reuse in `decode_into` and in
+    // `zstd_into` as well as the decoders.
     let mut frame = Frame::default();
+    let mut decoded = Vec::new();
     for id in 1..=2 {
         let _ = compression::decode_into(
             1 + u32::from(data[0] & 1),
@@ -60,6 +62,7 @@ pub fn decoder(data: &[u8]) {
             scans,
             peaks,
             limits,
+            &mut decoded,
             &mut frame,
         );
     }

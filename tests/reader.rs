@@ -1,5 +1,6 @@
 use sage_plus_tdf::{
-    Frame, Limits, MetadataDatabase, MobilityModel, MzCalibration, MzModel, SqlValue, TdfReader,
+    DecodeBuffers, Frame, Limits, MetadataDatabase, MobilityModel, MzCalibration, MzModel,
+    SqlValue, TdfReader,
 };
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
@@ -616,4 +617,51 @@ fn read_frame_into_reuses_buffers_and_matches_read_frame() {
     let lzf = TdfReader::open(lzf).unwrap();
     lzf.read_frame_into(10, &mut data, &mut frame).unwrap();
     assert_eq!(frame, lzf.read_frame(10).unwrap());
+}
+
+#[test]
+fn read_frame_into_buffers_reuses_the_decoded_buffer_and_matches_read_frame() {
+    let reader = TdfReader::open(fixture()).unwrap();
+    let mut buffers = DecodeBuffers::default();
+    let mut frame = Frame::default();
+    reader
+        .read_frame_into_buffers(10, &mut buffers, &mut frame)
+        .unwrap();
+    let capacities = (buffers.compressed.capacity(), buffers.decoded.capacity());
+    assert!(capacities.0 > 0 && capacities.1 > 0);
+    for _ in 0..3 {
+        reader
+            .read_frame_into_buffers(10, &mut buffers, &mut frame)
+            .unwrap();
+        assert_eq!(frame, reader.read_frame(10).unwrap());
+        // Re-reading a frame decodes through the same two buffers.
+        assert_eq!(
+            (buffers.compressed.capacity(), buffers.decoded.capacity()),
+            capacities
+        );
+    }
+    for id in [42, 10] {
+        reader
+            .read_frame_into_buffers(id, &mut buffers, &mut frame)
+            .unwrap();
+        assert_eq!(frame, reader.read_frame(id).unwrap());
+    }
+    // A failed read leaves the buffers usable for the next frame.
+    assert!(
+        reader
+            .read_frame_into_buffers(1, &mut buffers, &mut frame)
+            .is_err()
+    );
+    reader
+        .read_frame_into_buffers(42, &mut buffers, &mut frame)
+        .unwrap();
+    assert_eq!(frame, reader.read_frame(42).unwrap());
+    // An LZF frame decodes straight into the frame vectors, so the decoded
+    // buffer stays empty, and the frame still matches.
+    let lzf = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/lzf.d");
+    let lzf = TdfReader::open(lzf).unwrap();
+    lzf.read_frame_into_buffers(10, &mut buffers, &mut frame)
+        .unwrap();
+    assert_eq!(frame, lzf.read_frame(10).unwrap());
+    assert!(buffers.decoded.is_empty());
 }

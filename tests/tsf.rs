@@ -1,4 +1,4 @@
-use sage_plus_tdf::{ErrorKind, Limits, LineSpectrum, TsfReader};
+use sage_plus_tdf::{DecodeBuffers, ErrorKind, Limits, LineSpectrum, TsfReader};
 use std::path::{Path, PathBuf};
 
 fn fixture() -> PathBuf {
@@ -235,6 +235,43 @@ fn read_line_spectrum_into_reuses_buffers_and_matches_read_line_spectrum() {
     );
     reader
         .read_line_spectrum_into(2, &mut data, &mut spectrum)
+        .unwrap();
+    assert_eq!(spectrum, reader.read_line_spectrum(2).unwrap());
+}
+
+#[test]
+fn read_line_spectrum_into_buffers_reuses_the_decoded_buffer() {
+    let reader = TsfReader::open(fixture()).unwrap();
+    let mut buffers = DecodeBuffers::default();
+    let mut spectrum = LineSpectrum::default();
+    reader
+        .read_line_spectrum_into_buffers(1, &mut buffers, &mut spectrum)
+        .unwrap();
+    let capacities = (buffers.compressed.capacity(), buffers.decoded.capacity());
+    assert!(capacities.0 > 0 && capacities.1 > 0);
+    for _ in 0..3 {
+        reader
+            .read_line_spectrum_into_buffers(1, &mut buffers, &mut spectrum)
+            .unwrap();
+        assert_eq!(spectrum, reader.read_line_spectrum(1).unwrap());
+        assert_eq!(
+            (buffers.compressed.capacity(), buffers.decoded.capacity()),
+            capacities
+        );
+    }
+    for id in [2, 3, 1] {
+        reader
+            .read_line_spectrum_into_buffers(id, &mut buffers, &mut spectrum)
+            .unwrap();
+        assert_eq!(spectrum, reader.read_line_spectrum(id).unwrap());
+    }
+    assert!(
+        reader
+            .read_line_spectrum_into_buffers(9, &mut buffers, &mut spectrum)
+            .is_err()
+    );
+    reader
+        .read_line_spectrum_into_buffers(2, &mut buffers, &mut spectrum)
         .unwrap();
     assert_eq!(spectrum, reader.read_line_spectrum(2).unwrap());
 }

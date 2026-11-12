@@ -1,5 +1,7 @@
 #![cfg(feature = "minitdf")]
-use sage_plus_tdf::{ErrorKind, Limits, MiniTdfPrecursor, MiniTdfReader, MiniTdfSpectrum};
+use sage_plus_tdf::{
+    DecodeBuffers, ErrorKind, Limits, MiniTdfPrecursor, MiniTdfReader, MiniTdfSpectrum,
+};
 use std::path::{Path, PathBuf};
 
 /// MannLabs TimsRust `src/tests/test2.ms2` (two spectra).
@@ -154,6 +156,43 @@ fn read_spectrum_into_reuses_buffers_and_matches_read_spectrum() {
     );
     reader
         .read_spectrum_into(1, &mut data, &mut spectrum)
+        .unwrap();
+    assert_eq!(spectrum, reader.read_spectrum(1).unwrap());
+}
+
+#[test]
+fn read_spectrum_into_buffers_reuses_the_decoded_buffer() {
+    let reader = MiniTdfReader::open(fixture()).unwrap();
+    let mut buffers = DecodeBuffers::default();
+    let mut spectrum = MiniTdfSpectrum::default();
+    reader
+        .read_spectrum_into_buffers(0, &mut buffers, &mut spectrum)
+        .unwrap();
+    let capacities = (buffers.compressed.capacity(), buffers.decoded.capacity());
+    assert!(capacities.0 > 0 && capacities.1 > 0);
+    for _ in 0..3 {
+        reader
+            .read_spectrum_into_buffers(0, &mut buffers, &mut spectrum)
+            .unwrap();
+        assert_eq!(spectrum, reader.read_spectrum(0).unwrap());
+        assert_eq!(
+            (buffers.compressed.capacity(), buffers.decoded.capacity()),
+            capacities
+        );
+    }
+    for index in [1, 0] {
+        reader
+            .read_spectrum_into_buffers(index, &mut buffers, &mut spectrum)
+            .unwrap();
+        assert_eq!(spectrum, reader.read_spectrum(index).unwrap());
+    }
+    assert!(
+        reader
+            .read_spectrum_into_buffers(2, &mut buffers, &mut spectrum)
+            .is_err()
+    );
+    reader
+        .read_spectrum_into_buffers(1, &mut buffers, &mut spectrum)
         .unwrap();
     assert_eq!(spectrum, reader.read_spectrum(1).unwrap());
 }

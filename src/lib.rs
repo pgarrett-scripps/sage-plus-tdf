@@ -107,6 +107,26 @@ impl Default for Limits {
     }
 }
 
+/// Scratch buffers a caller keeps across reads: the compressed bytes read from
+/// the binary file and the bytes the Zstandard decoder writes. Reading frame
+/// after frame, or spectrum after spectrum, through one `DecodeBuffers`
+/// allocates once instead of per read, which is what
+/// [`TdfReader::read_frame_into_buffers`], [`TsfReader::read_line_spectrum_into_buffers`]
+/// and `MiniTdfReader::read_spectrum_into_buffers` are for. Both buffers are
+/// cleared by each read and keep their capacity; after an error they hold
+/// partial data, which the next read discards.
+///
+/// One set belongs to one reading thread. A reader is `Send + Sync` and takes
+/// `&self`, so give each thread its own.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DecodeBuffers {
+    /// The compressed frame or spectrum, as read from the binary file.
+    pub compressed: Vec<u8>,
+    /// What the Zstandard decoder wrote. Empty for an LZF frame, which is
+    /// decoded straight into the frame vectors.
+    pub decoded: Vec<u8>,
+}
+
 /// Original raw coordinates and counts. Intensities are not rescaled.
 /// `Default` gives the empty frame a buffer-reusing reader fills.
 #[derive(Debug, Default, PartialEq, Eq)]

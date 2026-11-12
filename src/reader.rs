@@ -1,9 +1,9 @@
 //! File-backed acquisition access over validated TDF metadata and raw frame decoding.
 use crate::{
-    AcquisitionType, DiaFrameMsMsInfo, DiaFrameMsMsWindow, DiaFrameMsMsWindowGroup, Error,
-    ErrorContext, Frame, FrameInfo, GlobalMetadata, Limits, LinearMobilityScale, LinearMzScale,
-    MetadataDatabase, MobilityModel, MzCalibration, MzModel, PasefFrameMsMsInfo, Precursor, Result,
-    TimsCalibration, compression, invalid, limit, schema::TdfMetadata,
+    AcquisitionType, DecodeBuffers, DiaFrameMsMsInfo, DiaFrameMsMsWindow, DiaFrameMsMsWindowGroup,
+    Error, ErrorContext, Frame, FrameInfo, GlobalMetadata, Limits, LinearMobilityScale,
+    LinearMzScale, MetadataDatabase, MobilityModel, MzCalibration, MzModel, PasefFrameMsMsInfo,
+    Precursor, Result, TimsCalibration, compression, invalid, limit, schema::TdfMetadata,
 };
 use std::{
     collections::BTreeMap,
@@ -187,9 +187,9 @@ impl TdfReader {
     }
 
     pub fn read_frame(&self, id: u64) -> Result<Frame> {
-        let mut data = Vec::new();
+        let mut buffers = DecodeBuffers::default();
         let mut frame = Frame::default();
-        self.read_frame_into(id, &mut data, &mut frame)?;
+        self.read_frame_into_buffers(id, &mut buffers, &mut frame)?;
         Ok(frame)
     }
 
@@ -200,8 +200,35 @@ impl TdfReader {
     /// [`read_frame`](Self::read_frame). On error both buffers hold partial
     /// data and must not be read.
     pub fn read_frame_into(&self, id: u64, data: &mut Vec<u8>, frame: &mut Frame) -> Result<()> {
+        // The decoder's own output buffer is allocated per call here.
+        // `read_frame_into_buffers` keeps that one too.
+        let mut decoded = Vec::new();
+        self.read_frame_into_parts(id, data, &mut decoded, frame)
+    }
+
+    /// Read a frame through buffers the caller keeps, including the one the
+    /// Zstandard decoder writes into, which [`read_frame_into`](Self::read_frame_into)
+    /// still allocates per call. Decoding and every limit are those of
+    /// [`read_frame`](Self::read_frame). On error the buffers and the frame hold
+    /// partial data and must not be read; the next read discards it.
+    pub fn read_frame_into_buffers(
+        &self,
+        id: u64,
+        buffers: &mut DecodeBuffers,
+        frame: &mut Frame,
+    ) -> Result<()> {
+        self.read_frame_into_parts(id, &mut buffers.compressed, &mut buffers.decoded, frame)
+    }
+
+    fn read_frame_into_parts(
+        &self,
+        id: u64,
+        data: &mut Vec<u8>,
+        decoded: &mut Vec<u8>,
+        frame: &mut Frame,
+    ) -> Result<()> {
         let offset = self.frames.get(&id).map(|info| info.binary_offset);
-        self.read_frame_into_inner(id, data, frame)
+        self.read_frame_into_inner(id, data, decoded, frame)
             .map_err(|error| {
                 error.with_context(ErrorContext {
                     path: Some(self.directory.join("analysis.tdf_bin")),
@@ -212,7 +239,13 @@ impl TdfReader {
             })
     }
 
-    fn read_frame_into_inner(&self, id: u64, data: &mut Vec<u8>, frame: &mut Frame) -> Result<()> {
+    fn read_frame_into_inner(
+        &self,
+        id: u64,
+        data: &mut Vec<u8>,
+        decoded: &mut Vec<u8>,
+        frame: &mut Frame,
+    ) -> Result<()> {
         let info = self
             .frames
             .get(&id)
@@ -277,6 +310,7 @@ impl TdfReader {
             scans,
             info.peak_count,
             self.limits,
+            decoded,
             frame,
         )
     }

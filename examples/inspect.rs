@@ -3,7 +3,7 @@
 //! tables, `analysis.tsf` every line spectrum, and a `<name>.ms2spectrum.*`
 //! pair every miniTDF spectrum. Two runs of the same acquisition can be diffed,
 //! and the `raw_digest` of two readers compared.
-use sage_plus_tdf::{Frame, LineSpectrum, TdfReader, TsfReader};
+use sage_plus_tdf::{DecodeBuffers, Frame, LineSpectrum, TdfReader, TsfReader};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
@@ -31,11 +31,11 @@ fn tdf(path: &Path) -> Report {
     let ids: Vec<_> = reader.frames().map(|f| f.id).collect();
     let mut peaks = 0u64;
     let mut hash = Sha256::new();
-    // One pair of buffers for the whole acquisition, as `read_frame_into` allows.
-    let mut data = Vec::new();
+    // One set of buffers for the whole acquisition, compressed and decoded.
+    let mut buffers = DecodeBuffers::default();
     let mut frame = Frame::default();
     for id in &ids {
-        reader.read_frame_into(*id, &mut data, &mut frame)?;
+        reader.read_frame_into_buffers(*id, &mut buffers, &mut frame)?;
         reader.mz_model(*id)?;
         reader.mobility_model(*id)?;
         hash.update(id.to_le_bytes());
@@ -73,11 +73,11 @@ fn tsf(path: &Path) -> Report {
     let levels = reader.frames().filter(|f| f.ms_level() == 2).count();
     let mut peaks = 0u64;
     let mut hash = Sha256::new();
-    let mut data = Vec::new();
+    let mut buffers = DecodeBuffers::default();
     let mut spectrum = LineSpectrum::default();
     if reader.has_line_spectra() {
         for id in &ids {
-            reader.read_line_spectrum_into(*id, &mut data, &mut spectrum)?;
+            reader.read_line_spectrum_into_buffers(*id, &mut buffers, &mut spectrum)?;
             reader.mz_model(*id)?;
             hash.update(id.to_le_bytes());
             for (index, intensity) in spectrum.indices.iter().zip(&spectrum.intensities) {
@@ -106,10 +106,10 @@ fn minitdf(path: &Path) -> Report {
     let reader = sage_plus_tdf::MiniTdfReader::open(path)?;
     let mut peaks = 0u64;
     let mut hash = Sha256::new();
-    let mut data = Vec::new();
+    let mut buffers = DecodeBuffers::default();
     let mut spectrum = sage_plus_tdf::MiniTdfSpectrum::default();
     for index in 0..reader.len() {
-        reader.read_spectrum_into(index, &mut data, &mut spectrum)?;
+        reader.read_spectrum_into_buffers(index, &mut buffers, &mut spectrum)?;
         hash.update((index as u64).to_le_bytes());
         for (mz, intensity) in spectrum.mz.iter().zip(&spectrum.intensities) {
             hash.update(mz.to_bits().to_le_bytes());

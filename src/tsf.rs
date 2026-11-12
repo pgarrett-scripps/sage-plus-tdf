@@ -5,9 +5,9 @@
 //! The line spectrum layout follows MannLabs TimsRust `timsrust-tsf`; the
 //! `FrameMsMsInfo` precursor table follows ProteoWizard's Bruker TSF reader.
 use crate::{
-    Error, ErrorContext, GlobalMetadata, Limits, LineSpectrum, LinearMzScale, MetadataDatabase,
-    MzCalibration, MzModel, Result, TsfFrameInfo, TsfFrameMsMsInfo, compression, invalid, limit,
-    reader::read_exact_at, schema::TdfMetadata,
+    DecodeBuffers, Error, ErrorContext, GlobalMetadata, Limits, LineSpectrum, LinearMzScale,
+    MetadataDatabase, MzCalibration, MzModel, Result, TsfFrameInfo, TsfFrameMsMsInfo, compression,
+    invalid, limit, reader::read_exact_at, schema::TdfMetadata,
 };
 use std::{
     collections::BTreeMap,
@@ -153,9 +153,9 @@ impl TsfReader {
 
     /// The frame's line spectrum. Requires `HasLineSpectra` = 1.
     pub fn read_line_spectrum(&self, id: u64) -> Result<LineSpectrum> {
-        let mut data = Vec::new();
+        let mut buffers = DecodeBuffers::default();
         let mut spectrum = LineSpectrum::default();
-        self.read_line_spectrum_into(id, &mut data, &mut spectrum)?;
+        self.read_line_spectrum_into_buffers(id, &mut buffers, &mut spectrum)?;
         Ok(spectrum)
     }
 
@@ -171,21 +171,56 @@ impl TsfReader {
         data: &mut Vec<u8>,
         spectrum: &mut LineSpectrum,
     ) -> Result<()> {
+        // The decoder's own output buffer is allocated per call here.
+        // `read_line_spectrum_into_buffers` keeps that one too.
+        let mut decoded = Vec::new();
+        self.read_line_spectrum_into_parts(id, data, &mut decoded, spectrum)
+    }
+
+    /// Read a line spectrum through buffers the caller keeps, including the one
+    /// the Zstandard decoder writes into, which
+    /// [`read_line_spectrum_into`](Self::read_line_spectrum_into) still
+    /// allocates per call. Decoding and every limit are those of
+    /// [`read_line_spectrum`](Self::read_line_spectrum). On error the buffers
+    /// and the spectrum hold partial data and must not be read.
+    pub fn read_line_spectrum_into_buffers(
+        &self,
+        id: u64,
+        buffers: &mut DecodeBuffers,
+        spectrum: &mut LineSpectrum,
+    ) -> Result<()> {
+        self.read_line_spectrum_into_parts(
+            id,
+            &mut buffers.compressed,
+            &mut buffers.decoded,
+            spectrum,
+        )
+    }
+
+    fn read_line_spectrum_into_parts(
+        &self,
+        id: u64,
+        data: &mut Vec<u8>,
+        decoded: &mut Vec<u8>,
+        spectrum: &mut LineSpectrum,
+    ) -> Result<()> {
         let offset = self.frames.get(&id).and_then(|frame| frame.binary_offset);
-        self.read_line_inner(id, data, spectrum).map_err(|error| {
-            error.with_context(ErrorContext {
-                path: Some(self.directory.join("analysis.tsf_bin")),
-                frame_id: Some(id),
-                byte_offset: offset,
-                ..Default::default()
+        self.read_line_inner(id, data, decoded, spectrum)
+            .map_err(|error| {
+                error.with_context(ErrorContext {
+                    path: Some(self.directory.join("analysis.tsf_bin")),
+                    frame_id: Some(id),
+                    byte_offset: offset,
+                    ..Default::default()
+                })
             })
-        })
     }
 
     fn read_line_inner(
         &self,
         id: u64,
         data: &mut Vec<u8>,
+        decoded: &mut Vec<u8>,
         spectrum: &mut LineSpectrum,
     ) -> Result<()> {
         data.clear();
@@ -255,14 +290,14 @@ impl TsfReader {
         }
         data.resize(compressed, 0);
         read_exact_at(&self.binary, data, offset + 8)?;
-        let decoded = compression::zstd(data, expected, self.limits)?;
+        compression::zstd_into(data, expected, self.limits, decoded)?;
         if decoded.len() != expected {
             return Err(invalid(
                 "decoded line spectrum length disagrees with NumPeaks",
             ));
         }
         crate::tsf_blob::line_spectrum_peaks(
-            &decoded,
+            decoded,
             peaks,
             &mut spectrum.indices,
             &mut spectrum.intensities,
