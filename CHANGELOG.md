@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- `examples/inspect.rs` reads TSF and miniTDF as well as TDF, choosing by what the directory holds, and prints the same shape of JSON digest for each. All three modes read through the buffer-reusing methods, so the example also shows how to use them.
 - Document the public items a caller meets first: `Result`, `Limits`'s five ceilings, `Frame`'s four fields, every `ErrorKind` variant, every `ErrorContext` field, and `Error` with its variants, named fields and four methods. `missing_docs` now warns, with a module-level allow on the modules whose items are still bare, so the rest can be documented module by module instead of in one pass.
 - The miniTDF real-data test pins the peak total it decodes from Zenodo record 10908040, 1,897,058 over 2,467 spectra, instead of printing it. Its TSF counterpart already pinned 70,265, so a decoder change that halved every miniTDF spectrum would have passed.
 - Test the ModelType 2 mobility model the way the m/z model is tested: `MobilityModel::scan_number` is asserted to invert `one_over_k0` inside the C8 to C9 window and across both linear continuations, `one_over_k0` to decrease strictly over 40,000 scans, and the non-finite, degenerate and unusable-coefficient paths to be reported as corrupt data. `src/mobility.rs` had no test module. No source line changed.

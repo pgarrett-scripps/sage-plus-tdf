@@ -51,10 +51,13 @@ fn read(path: &str) -> Result<()> {
 }
 ```
 
-Print a digest of an acquisition from a checkout:
+Print a digest of an acquisition from a checkout. The example reads the format
+from the directory: TDF frames, TSF line spectra, or miniTDF spectra with
+`--features minitdf`.
 
 ```sh
 cargo run --locked --example inspect -- /path/to/acquisition.d
+cargo run --locked --features minitdf --example inspect -- /path/to/spectra
 ```
 
 `Limits::default()` allows 256 MiB compressed data, 512 MiB decompressed data, 32 million peaks and 100,000 scans per frame. `TdfReader::with_limits` accepts other ceilings, and `Limits::metadata` bounds metadata rows, columns, value sizes and query execution. These bound this library's output, not every allocation inside the database engine, so isolate processing of hostile databases.
