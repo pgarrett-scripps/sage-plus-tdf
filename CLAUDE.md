@@ -36,18 +36,31 @@ first. Prefer additive changes, and say in the commit message what a caller must
 
 ## Before you commit
 
-The five checks in `CONTRIBUTING.md`: `fmt --all --check`, `clippy -- -D warnings`, `test`,
-`doc --no-deps` with `RUSTDOCFLAGS="-D warnings"`, and `deny check`; the middle three take
-`--locked --all-features`, which needs a C compiler. This machine is shared, so every cargo
-build, test and clippy run goes through the `ajs` scheduler, never `exclusive=true` unless the
-timing will be reported; only `cargo fmt` and a single-crate `cargo check` run directly.
+`scripts/local-gate.sh` runs every CI check that can run on one Linux machine and
+prints which of the ten CI jobs it covered. Run it, not a hand-written subset: a
+subset is how commit a430347 reached CI with a fuzz harness that did not compile,
+because the ad-hoc command left the fuzz workspace out. It labels each step with
+the CI job it stands for, keeps building in `~/.cache` on the root drive, and
+runs every step even after one fails, so one run names everything that is wrong;
+`LOCAL_GATE_PASSED` on the last line is the thing to look for.
+
+This machine is shared, so the gate goes through the `ajs` scheduler, never
+`exclusive=true` unless the timing will be reported; only `cargo fmt` and a
+single-crate `cargo check` run directly.
 
 ```sh
-ajs submit --cpu 4 --mem 8G --max-runtime 25m --title "sage-plus-tdf checks" \
-  --description "what this gates" --meta est=8m -- bash -lc 'cd ~/Repos/sage-plus-tdf \
-  && cargo clippy --locked --all-targets --all-features -- -D warnings \
-  && cargo test --locked --all-features'
+ajs submit --cpu 6 --mem 12G --max-runtime 30m --title "sage-plus-tdf local gate" \
+  --description "what this gates" --meta est=12m \
+  -- bash -lc 'SAGE_PLUS_MINITDF_ZENODO=~/Data/sage-plus-tdf-testdata/minitdf-zenodo-10908040/extracted \
+  ~/Repos/sage-plus-tdf/scripts/local-gate.sh'
 ```
+
+Three CI jobs it cannot finish here, and nothing local replaces them: `test
+(macos-latest)` and `test (windows-latest)` need those hosts, and `fuzz-smoke`
+runs libFuzzer under a pinned nightly with AddressSanitizer, which this machine
+has no cargo-fuzz for. The gate compiles the fuzz workspace instead, which is
+what catches a source change the harness cannot follow. A green gate still needs
+GitHub CI green before a branch is reported as done.
 
 ## Fixtures are evidence
 
