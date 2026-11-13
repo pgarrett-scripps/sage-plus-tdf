@@ -2,14 +2,55 @@
 //! summed, filtered or renumbered.
 use crate::{Error, Result, SqlValue, field, invalid};
 
+/// The sign of the ion source voltage a frame was acquired with, from
+/// `Frames.Polarity`.
+///
+/// Bruker writes `+` or `-` in that column. A NULL, a schema without the column
+/// and any other text all read as [`Polarity::Unknown`], so an acquisition that
+/// reads today keeps reading. A non-text value is still reported as corrupt
+/// data, as it was when this field held a `String`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Polarity {
+    /// `+`.
+    Positive,
+    /// `-`.
+    Negative,
+    /// Absent, or text that is neither `+` nor `-`.
+    #[default]
+    Unknown,
+}
+
+impl Polarity {
+    /// Read the `Frames.Polarity` text exactly as Bruker writes it: `+` is
+    /// [`Polarity::Positive`], `-` is [`Polarity::Negative`], anything else is
+    /// [`Polarity::Unknown`].
+    pub fn from_bruker_text(text: &str) -> Self {
+        match text {
+            "+" => Self::Positive,
+            "-" => Self::Negative,
+            _ => Self::Unknown,
+        }
+    }
+
+    /// The text Bruker writes for this polarity, or `None` for
+    /// [`Polarity::Unknown`], which has no spelling of its own.
+    pub fn as_bruker_text(self) -> Option<&'static str> {
+        match self {
+            Self::Positive => Some("+"),
+            Self::Negative => Some("-"),
+            Self::Unknown => None,
+        }
+    }
+}
+
 /// One `Frames` row.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FrameInfo {
     pub id: u64,
     /// `Time`, in seconds.
     pub retention_time_seconds: f64,
-    /// `Polarity`, usually `+` or `-`.
-    pub polarity: Option<String>,
+    /// `Polarity`, as stored: `+`, `-`, or unknown.
+    pub polarity: Polarity,
     pub scan_mode: Option<u32>,
     pub msms_type: u32,
     /// `TimsId`: byte offset of the frame in `analysis.tdf_bin`.
@@ -123,7 +164,8 @@ pub struct TsfFrameInfo {
     pub id: u64,
     /// `Time`, in seconds.
     pub retention_time_seconds: f64,
-    pub polarity: Option<String>,
+    /// `Polarity`, as stored: `+`, `-`, or unknown.
+    pub polarity: Polarity,
     pub scan_mode: Option<u32>,
     pub msms_type: u32,
     /// `TimsId`: byte offset of the frame in `analysis.tsf_bin`, if it has data.
@@ -295,4 +337,19 @@ impl GlobalMetadata {
 
 fn missing(key: &str) -> Error {
     field(invalid(format!("missing key {key}")), "GlobalMetadata", key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Polarity;
+
+    #[test]
+    fn polarity_round_trips_the_text_it_knows() {
+        for polarity in [Polarity::Positive, Polarity::Negative] {
+            let text = polarity.as_bruker_text().unwrap();
+            assert_eq!(Polarity::from_bruker_text(text), polarity);
+        }
+        assert_eq!(Polarity::Unknown.as_bruker_text(), None);
+        assert_eq!(Polarity::default(), Polarity::Unknown);
+    }
 }

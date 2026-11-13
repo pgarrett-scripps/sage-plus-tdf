@@ -2,8 +2,8 @@
 use crate::{
     DiaFrameMsMsInfo, DiaFrameMsMsWindow, DiaFrameMsMsWindowGroup, Error, ErrorContext, FrameInfo,
     GlobalMetadata, Limits, MetadataDatabase, MetadataLimits, MetadataRow, MobilityModel,
-    MzCalibration, MzModel, PasefFrameMsMsInfo, Precursor, Result, SqlValue, TimsCalibration,
-    TsfFrameInfo, TsfFrameMsMsInfo, field, invalid, limit,
+    MzCalibration, MzModel, PasefFrameMsMsInfo, Polarity, Precursor, Result, SqlValue,
+    TimsCalibration, TsfFrameInfo, TsfFrameMsMsInfo, field, invalid, limit,
 };
 use std::{collections::BTreeMap, path::Path, sync::OnceLock};
 
@@ -340,7 +340,7 @@ pub(crate) fn parse_frame(row: &MetadataRow) -> Result<FrameInfo> {
     Ok(FrameInfo {
         id: c.u64("Id")?,
         retention_time_seconds: c.f64("Time")?,
-        polarity: c.text("Polarity")?,
+        polarity: c.polarity("Polarity")?,
         scan_mode: c.opt_u32("ScanMode")?,
         msms_type: c.u32("MsMsType")?,
         binary_offset: c.u64("TimsId")?,
@@ -405,7 +405,7 @@ pub(crate) fn parse_tsf_frame(row: &MetadataRow) -> Result<TsfFrameInfo> {
     Ok(TsfFrameInfo {
         id: c.u64("Id")?,
         retention_time_seconds: c.f64("Time")?,
-        polarity: c.text("Polarity")?,
+        polarity: c.polarity("Polarity")?,
         scan_mode: c.opt_u32("ScanMode")?,
         msms_type: c.u32("MsMsType")?,
         binary_offset: c.opt_u64("TimsId")?,
@@ -528,6 +528,19 @@ impl Columns<'_> {
             .ok_or_else(|| self.error(name, "missing value"))
     }
 
+    /// `Frames.Polarity`, without the `String` a text read would allocate per
+    /// frame. An absent or NULL value is `Unknown`; a non-text value is still an
+    /// error, as it was when the field held a `String`.
+    fn polarity(&self, name: &str) -> Result<Polarity> {
+        match self.value(name) {
+            None => Ok(Polarity::Unknown),
+            Some(value) => value
+                .as_str()
+                .map(Polarity::from_bruker_text)
+                .ok_or_else(|| self.error(name, "expected text")),
+        }
+    }
+
     fn text(&self, name: &str) -> Result<Option<String>> {
         self.value(name)
             .map(|value| {
@@ -578,6 +591,55 @@ mod tests {
         values[0] = Integer(10);
         values[1] = Real(f64::INFINITY);
         assert!(parse_frame(&row(&names, values).unwrap()).is_err());
+    }
+
+    #[test]
+    fn polarity_maps_the_bruker_text_and_reads_anything_else_as_unknown() {
+        use SqlValue::{Integer, Null, Real, Text};
+        let names = [
+            "Id", "Time", "MsMsType", "NumScans", "NumPeaks", "TimsId", "Polarity",
+        ];
+        let base = vec![
+            Integer(10),
+            Real(1.2),
+            Integer(0),
+            Integer(1),
+            Integer(0),
+            Integer(0),
+        ];
+        let parse = |polarity: SqlValue| {
+            let mut values = base.clone();
+            values.push(polarity);
+            parse_frame(&row(&names, values).unwrap())
+        };
+        assert_eq!(
+            parse(Text("+".into())).unwrap().polarity,
+            Polarity::Positive
+        );
+        assert_eq!(
+            parse(Text("-".into())).unwrap().polarity,
+            Polarity::Negative
+        );
+        // Text Bruker does not write, a NULL and a schema without the column are
+        // all unknown rather than an error, so an acquisition that reads today
+        // keeps reading.
+        for text in ["", "+-", "positive", "P"] {
+            assert_eq!(
+                parse(Text(text.into())).unwrap().polarity,
+                Polarity::Unknown
+            );
+        }
+        assert_eq!(parse(Null).unwrap().polarity, Polarity::Unknown);
+        let without = parse_frame(&row(&names[..6], base.clone()).unwrap()).unwrap();
+        assert_eq!(without.polarity, Polarity::Unknown);
+        // A non-text value is corrupt data, as it was when the field was a String.
+        let error = parse(Integer(1)).unwrap_err();
+        assert_eq!(error.kind(), crate::ErrorKind::CorruptData);
+        assert!(
+            error
+                .contexts()
+                .any(|c| c.field.as_deref() == Some("Polarity"))
+        );
     }
 
     #[test]

@@ -68,8 +68,8 @@ pub use mobility::{LinearMobilityScale, MobilityModel};
 pub use reader::TdfReader;
 pub use tables::{
     AcquisitionType, DiaFrameMsMsInfo, DiaFrameMsMsWindow, DiaFrameMsMsWindowGroup, FrameInfo,
-    GlobalMetadata, LineSpectrum, PasefFrameMsMsInfo, Precursor, TimsCalibration, TsfFrameInfo,
-    TsfFrameMsMsInfo,
+    GlobalMetadata, LineSpectrum, PasefFrameMsMsInfo, Polarity, Precursor, TimsCalibration,
+    TsfFrameInfo, TsfFrameMsMsInfo,
 };
 pub use tsf::TsfReader;
 

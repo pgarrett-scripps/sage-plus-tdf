@@ -1,6 +1,6 @@
 use sage_plus_tdf::{
     DecodeBuffers, Frame, Limits, MetadataDatabase, MobilityModel, MzCalibration, MzModel,
-    SqlValue, TdfReader,
+    Polarity, SqlValue, TdfReader,
 };
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
@@ -473,7 +473,8 @@ fn typed_tables_follow_the_bruker_schema() {
     let path = fixture().parent().unwrap().join("tables.d");
     let reader = TdfReader::open(&path).unwrap();
     let frame = reader.frame(10).unwrap();
-    assert_eq!(frame.polarity.as_deref(), Some("+"));
+    assert_eq!(frame.polarity, Polarity::Positive);
+    assert_eq!(frame.polarity.as_bruker_text(), Some("+"));
     assert_eq!(
         (frame.scan_mode, frame.msms_type, frame.ms_level()),
         (Some(8), 0, Some(1))
