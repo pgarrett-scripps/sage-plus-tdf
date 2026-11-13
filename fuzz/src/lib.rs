@@ -5,8 +5,8 @@
 pub use sage_plus_tdf::{
     DiaFrameMsMsInfo, DiaFrameMsMsWindow, DiaFrameMsMsWindowGroup, Error, ErrorContext, ErrorKind,
     Frame, FrameInfo, GlobalMetadata, Limits, MetadataDatabase, MetadataLimits, MetadataRow,
-    MobilityModel, MzCalibration, MzModel, PasefFrameMsMsInfo, Precursor, Result, SqlValue,
-    TimsCalibration, TsfFrameInfo, TsfFrameMsMsInfo,
+    MobilityModel, MzCalibration, MzModel, PasefFrameMsMsInfo, Polarity, Precursor, Result,
+    SqlValue, TimsCalibration, TsfFrameInfo, TsfFrameMsMsInfo,
 };
 
 fn invalid(message: impl Into<String>) -> Error {
